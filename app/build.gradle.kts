@@ -1,4 +1,8 @@
 import java.util.Properties
+import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 plugins {
     id("com.android.application")
@@ -138,4 +142,125 @@ dependencies {
 
     // OkHttp（模型下载用）
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}
+
+// =============================================================
+// ★ normal（完整版）构建时自动下载 QNN EPContext bin
+// -------------------------------------------------------------
+// QNN 模型二进制（.bin）约 197MB，不入 git 仓库（.gitignore 忽略）。
+// 构建 normal 版 APK 时若 `app/src/normal/assets/qnn/` 下缺少 .bin，
+// 自动从 HF 镜像下载（hf-mirror.com 国内优先，huggingface.co 兜底），
+// 支持断点续传与文件大小校验；下载失败则中断构建并提示。
+// Lite（精简版）不内置模型，构建时跳过本步骤。
+//
+// 手动跳过：./gradlew assembleNormalRelease -PskipBinDownload
+// =============================================================
+data class QnnBinSpec(
+    val name: String,          // 目标文件名（与 assets/qnn/*.onnx 同名）
+    val sizeBytes: Long,       // 用于完整性校验
+)
+
+val QNN_BINS = listOf(
+    QnnBinSpec("qnn_rmbg14_sdk250_v2.bin", 99_079_792L),
+    QnnBinSpec("qnn_animeseg_v73.bin", 90_789_176L),
+    QnnBinSpec("qnn_modnet_sm8550_512.bin", 15_930_872L),
+)
+
+// 与 ModelManager 镜像源保持一致
+val QNN_BIN_MIRRORS = listOf(
+    "https://hf-mirror.com",
+    "https://huggingface.co",
+)
+
+// repo / 文件名映射
+fun qnnBinSource(name: String): Pair<String, String> = when (name) {
+    "qnn_rmbg14_sdk250_v2.bin" -> "zuimengqm/rmbg-qnn-rmbg14" to "qnn/qnn_rmbg14_sdk250_v2.bin"
+    "qnn_animeseg_v73.bin" -> "zuimengqm/rmbg-qnn-animeseg" to "qnn/qnn_animeseg_v73.bin"
+    "qnn_modnet_sm8550_512.bin" -> "zuimengqm/rmbg-qnn-modnet" to "qnn/qnn_modnet_sm8550_512.bin"
+    else -> error("未知 QNN bin: $name")
+}
+
+fun ensureQnnBins() {
+    val dir = rootProject.file("app/src/normal/assets/qnn")
+    dir.mkdirs()
+    for (spec in QNN_BINS) {
+        val target = File(dir, spec.name)
+        if (target.exists() && target.length() == spec.sizeBytes) {
+            println("✓ QNN bin 已就绪: ${spec.name}")
+            continue
+        }
+        val (repo, srcPath) = qnnBinSource(spec.name)
+        var downloaded = if (target.exists()) target.length() else 0L
+        var ok = false
+        var lastErr: Exception? = null
+        for (base in QNN_BIN_MIRRORS) {
+            val url = URL("$base/$repo/resolve/main/$srcPath")
+            var conn: HttpURLConnection? = null
+            try {
+                println("↓ 下载 ${spec.name} (${spec.sizeBytes / 1048576}MB) <- $base ${if (downloaded > 0) "[续传 ${downloaded / 1048576}MB]" else ""}")
+                conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 30_000
+                conn.readTimeout = 120_000
+                conn.instanceFollowRedirects = true
+                if (downloaded > 0) conn.setRequestProperty("Range", "bytes=$downloaded-")
+                conn.connect()
+                val code = conn.responseCode
+                if (code !in 200..299 && code != 206) {
+                    lastErr = RuntimeException("HTTP $code")
+                    conn.disconnect()
+                    continue
+                }
+                val input = conn.inputStream
+                val out = FileOutputStream(target, downloaded > 0)
+                val buf = ByteArray(1 shl 16)
+                var total = downloaded
+                var n: Int
+                while (input.read(buf).also { n = it } != -1) {
+                    out.write(buf, 0, n)
+                    total += n
+                }
+                out.close()
+                input.close()
+                conn.disconnect()
+                if (target.length() != spec.sizeBytes) {
+                    lastErr = RuntimeException("大小校验失败: 期望 ${spec.sizeBytes} 实际 ${target.length()}")
+                    downloaded = target.length() // 下次续传
+                    continue
+                }
+                ok = true
+                println("✓ ${spec.name} 下载完成")
+                break
+            } catch (e: Exception) {
+                lastErr = e
+                println("  ✗ $base 失败: ${e.message}")
+                try { conn?.disconnect() } catch (_: Exception) {}
+            }
+        }
+        if (!ok) throw GradleException("QNN bin 下载失败: ${spec.name} -> ${lastErr?.message}")
+    }
+}
+
+tasks.register("downloadQnnBins") {
+    group = "build"
+    description = "下载 normal 版 QNN EPContext bin（hf-mirror 优先，官方兜底）"
+    onlyIf {
+        if (project.hasProperty("skipBinDownload")) {
+            println("  (已通过 -PskipBinDownload 跳过 QNN bin 下载)")
+            false
+        } else {
+            // 仅 normal flavor 的构建任务触发（任务名含 Normal，如 assembleNormalRelease / compileNormalDebugKotlin）
+            val names = gradle.startParameter.taskNames.joinToString(" ")
+            val isNormal = names.contains("Normal")
+            if (!isNormal) println("  (lite/非 normal 构建，跳过 QNN bin 下载)")
+            isNormal
+        }
+    }
+    doLast { ensureQnnBins() }
+}
+
+// 构建 normal 版时，preBuild 阶段先确保 bin 就绪
+tasks.configureEach {
+    if (name == "preBuild") {
+        dependsOn("downloadQnnBins")
+    }
 }

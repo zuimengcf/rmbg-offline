@@ -30,3 +30,6 @@ app/src/normal/assets/qnn/*.bin
 keystore/
 keystore.properties
 
+
+# 上传辅助脚本（含 token，勿提交）
+push_api.py
