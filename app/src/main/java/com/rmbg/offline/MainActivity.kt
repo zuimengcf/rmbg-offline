@@ -312,6 +312,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var isProcessing by remember { mutableStateOf(false) }
     var isDownloading by remember { mutableStateOf(false) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
+    // ★ 可取消下载：保存当前下载协程引用，供「取消下载」按钮 cancel
+    var downloadingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var downloadProgress by remember { mutableStateOf(0f) }
     var downloadSpeed by remember { mutableStateOf(0L) }
     var downloadBytes by remember { mutableStateOf(0L) }
@@ -957,19 +959,32 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         val selBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
         if (selBm?.isQnn == true) {
             val qnnId = selBm.id
-            scope.launch {
+            // ★ 下载前连通性检查：两个镜像都不可达则不浪费时间
+            val selMirror = ModelManager.mirrors[selectedMirrorIndex.coerceIn(0, ModelManager.mirrors.size - 1)]
+            val reachable = ModelManager.quickProbe(selMirror.baseUrl)
+            if (!reachable) {
+                statusText = "❌ 网络不可达（${selMirror.name}），请检查网络后重试"
+                modelReady = ModelManager.isModelDownloaded()
+                Toast.makeText(context, "当前镜像不可达，请检查网络", Toast.LENGTH_SHORT).show()
+                return
+            }
+            // ★ 重置取消标志 + 保存工作协程
+            ModelManager.resetCancel()
+            downloadingJob = scope.launch {
                 isDownloading = true
                 statusText = "正在部署 ${selBm.name}（内置优先，不足时联网下载）..."
                 // 双轨：assets 内置兜底 → 缺失则走 HF 仓库下载 onnx+bin
                 val ok = ModelManager.ensureQnnContextDual(context, qnnId)
+                downloadingJob = null
                 isDownloading = false
                 if (ok) {
                     modelReady = ModelManager.isModelDownloaded()
                     statusText = "${selBm.name} 已就绪，选择图片开始抠图"
                     Toast.makeText(context, "${selBm.name} 部署完成（${selBm.sizeBytes / 1024 / 1024}MB）", Toast.LENGTH_SHORT).show()
                 } else {
-                    statusText = "${selBm.name} 部署失败，可检查网络后重试"
-                    Toast.makeText(context, "${selBm.name} 部署失败", Toast.LENGTH_SHORT).show()
+                    statusText = if (ModelManager.isCancelRequested()) "下载已取消"
+                        else "${selBm.name} 部署失败，可检查网络后重试"
+                    Toast.makeText(context, if (ModelManager.isCancelRequested()) "下载已取消" else "${selBm.name} 部署失败", Toast.LENGTH_SHORT).show()
                 }
             }
             return
@@ -984,7 +999,17 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
         ModelManager.hfRepo = modelRepo.trim().ifEmpty { "briaai/RMBG-1.4" }
         ModelManager.hfFile = modelFile.trim().ifEmpty { "onnx/model.onnx" }
-        scope.launch {
+        // ★ 下载前连通性检查
+        val selMirror = ModelManager.mirrors[selectedMirrorIndex.coerceIn(0, ModelManager.mirrors.size - 1)]
+        val reachable = ModelManager.quickProbe(selMirror.baseUrl)
+        if (!reachable) {
+            statusText = "❌ 网络不可达（${selMirror.name}），请检查网络后重试"
+            Toast.makeText(context, "当前镜像不可达，请检查网络", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // ★ 重置取消标志 + 保存工作协程
+        ModelManager.resetCancel()
+        downloadingJob = scope.launch {
             isDownloading = true
             downloadProgress = 0f
             downloadSpeed = 0L
@@ -1011,20 +1036,37 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         statusText = "$mirrorName 失败: $error"
                     }
                     override fun onDone(file: File) {
+                        downloadingJob = null
                         modelReady = true
                         isDownloading = false
                         statusText = "模型下载完成！选择图片开始抠图"
                         Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
                     }
                     override fun onError(e: Exception) {
+                        downloadingJob = null
                         isDownloading = false
                         activeMirrorName = null
-                        statusText = "下载失败: ${e.message}"
-                        Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
+                        if (ModelManager.isCancelRequested())
+                            Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
+                        else
+                            Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 }
             )
         }
+    }
+
+    // ---- 取消下载 ----
+    fun cancelDownload() {
+        if (!isDownloading) return
+        ModelManager.requestCancelDownload()
+        // 协程取消：配合 ModelManager 的 cancelRequested 标志，分块读循环会及时退出
+        downloadingJob?.cancel()
+        downloadingJob = null
+        isDownloading = false
+        statusText = "下载已取消"
+        Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
     }
 
     // ---- 从自定义直链下载模型（模型配置·下载链接入口）----
@@ -1531,7 +1573,24 @@ fun RmbgScreen(sharedUris: List<Uri>) {
 
             // ===== 模型操作按钮 =====
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (!modelReady) {
+                if (isDownloading) {
+                    // ★ 下载进行中 → 显示"取消下载"
+                    Button(
+                        onClick = { cancelDownload() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("取消下载", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else if (!modelReady) {
                     Button(
                         onClick = { startDownload() },
                         enabled = !isDownloading,

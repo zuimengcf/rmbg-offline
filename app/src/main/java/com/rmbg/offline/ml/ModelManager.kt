@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.rmbg.offline.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -752,6 +753,40 @@ object ModelManager {
     /** 分块下载并发数 */
     private const val DOWNLOAD_THREADS = 4
 
+    // ---- 下载取消支持 ----
+    /** 请求取消当前下载：置位后下载循环在每个分块的读循环里检测并中断 */
+    @Volatile
+    var cancelRequested: Boolean = false
+
+    /** 重置取消标志（每次启动下载前调用） */
+    fun resetCancel() { cancelRequested = false }
+
+    /** 请求取消下载 */
+    fun requestCancelDownload() { cancelRequested = true }
+
+    /** 下载是否被请求取消 */
+    fun isCancelRequested(): Boolean = cancelRequested
+
+    // ---- 下载前连通性检查 ----
+    /**
+     * 快速探测镜像源/URL 是否可达（HEAD 请求，短超时）。
+     * 用于下载前/镜像切换前预检，避免每个镜像白白等待 connectTimeout(30s)。
+     * @param url 要探测的地址（域名根或完整 URL 均可）
+     * @param timeoutMs 探测超时（默认 4s）
+     * @return true=可达
+     */
+    fun quickProbe(url: String, timeoutMs: Long = 4000): Boolean {
+        return try {
+            val probeClient = OkHttpClient.Builder()
+                .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .callTimeout(timeoutMs + 1000, TimeUnit.MILLISECONDS)
+                .build()
+            val req = Request.Builder().url(url).head().build()
+            probeClient.newCall(req).execute().use { resp -> resp.code in 200..499 }
+        } catch (_: Exception) { false }
+    }
+
     /** 镜像源列表：国内优先，官方兜底 */
     val mirrors = listOf(
         Mirror("hf-mirror.com", "https://hf-mirror.com", "国内 HuggingFace 镜像 · 推荐"),
@@ -874,31 +909,13 @@ object ModelManager {
                     binDst.outputStream().use { dst -> src.copyTo(dst) }
                 }
             }
-            // ★ QNN EP 插件：从 APK native lib 复制到模型目录（extractNativeLibs=false 时 nativeLibraryDir 无实体文件，
-            //   registerExecutionProviderLibrary 需要真实文件路径）
-            val pluginSrc = File(context.applicationInfo.nativeLibraryDir, "libonnxruntime_providers_qnn.so")
-            val pluginDst = qnnPluginFile
-            if (pluginSrc.exists() && (!pluginDst.exists() || pluginDst.length() != pluginSrc.length())) {
-                pluginSrc.copyTo(pluginDst, overwrite = true)
-            } else if (!pluginSrc.exists()) {
-                // 兜底：extractNativeLibs=false，插件在 APK 内 lib/arm64-v8a/，用 ZipFile 提取
-                try {
-                    val apkPath = context.applicationInfo.sourceDir
-                    java.util.zip.ZipFile(apkPath).use { zf ->
-                        val entry = zf.getEntry("lib/arm64-v8a/libonnxruntime_providers_qnn.so")
-                            ?: zf.getEntry("lib/arm64/libonnxruntime_providers_qnn.so")
-                        if (entry != null && (!pluginDst.exists() || pluginDst.length() != entry.size)) {
-                            zf.getInputStream(entry).use { src ->
-                                pluginDst.outputStream().use { dst -> src.copyTo(dst) }
-                            }
-                        }
-                    }
-                } catch (ze: Exception) {
-                    android.util.Log.w("RMBG-MODEL", "APK 提取插件失败: ${ze.message}")
-                }
-            }
-            // ★ QNN runtime 库（libQnnHtp.so 等）：插件 dlopen 时需要同目录能找到依赖，一并复制到 modelDir
-            copyQnnRuntimeLibs(context)
+            // ★ 不再往 modelDir 复制 QNN EP 插件（libonnxruntime_providers_qnn.so）：
+            //   RmbgOnnxEngine 明确只从 ApplicationInfo.nativeLibraryDir 加载插件
+            //   （Android linker namespace 不允许从外部存储 dlopen，会报 clns-9 错误），
+            //   modelDir 里的插件复制是死冗余，已废弃。
+            // ★ 不再往 modelDir 复制 QNN runtime 库（含 libQnnHtpPrepare.so 85MB）：
+            //   RmbgOnnxEngine 已从 ApplicationInfo.nativeLibraryDir 直接加载全套 QNN 库（qnn-runtime AAR），
+            //   modelDir 复制属历史遗留老方案，会在 Android/data 下白占 ~96MB，已废弃。
             onnxDst.exists() && binDst.exists() &&
                 onnxDst.length() > 100 && binDst.length() > 1_000_000
         } catch (e: Exception) {
@@ -945,9 +962,16 @@ object ModelManager {
             val start = selectedMirrorIndex.coerceIn(0, mirrors.size - 1)
             val order = (start until mirrors.size) + (0 until start)
             for (idx in order) {
+                // ★ 支持取消：已请求取消则不继续尝试其他镜像
+                if (cancelRequested) return@downloadOne false
                 val mirror = mirrors[idx]
                 val fu = "${mirror.baseUrl}/$repoId/resolve/main/$repoFile"
                 try {
+                    // ★ 下载前快速连通性检查：不可达镜像直接跳过
+                    if (!quickProbe(mirror.baseUrl)) {
+                        mainHandler.post { listener?.onMirrorError(mirror.name, "网络不可达") }
+                        continue
+                    }
                     mainHandler.post { listener?.onMirrorSwitch(idx, mirror.name) }
                     fun buildReq(u: String): Request {
                         val b = Request.Builder().url(u)
@@ -1024,27 +1048,10 @@ object ModelManager {
     /** QNN HTP backend 库（backend_path 指向，与插件同目录） */
     val qnnHtpFile: File get() = File(modelDir(), "libQnnHtp.so")
 
-    /** 复制 QNN runtime 库（libQnnHtp.so 等）到模型目录：插件 dlopen 时同目录能找到依赖 */
-    private fun copyQnnRuntimeLibs(context: Context) {
-        val libNames = listOf("libQnnHtp.so", "libQnnHtpV73Stub.so", "libQnnSystem.so", "libQnnHtpPrepare.so")
-        try {
-            val apkPath = context.applicationInfo.sourceDir
-            java.util.zip.ZipFile(apkPath).use { zf ->
-                for (name in libNames) {
-                    val entry = zf.getEntry("lib/arm64-v8a/$name") ?: zf.getEntry("lib/arm64/$name") ?: continue
-                    val dst = File(modelDir(), name)
-                    if (!dst.exists() || dst.length() != entry.size) {
-                        zf.getInputStream(entry).use { src ->
-                            dst.outputStream().use { out -> src.copyTo(out) }
-                        }
-                        android.util.Log.i("RMBG-MODEL", "QNN runtime 库已复制: $name")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("RMBG-MODEL", "QNN runtime 库复制失败: ${e.message}")
-        }
-    }
+    // ★ 已废弃：copyQnnRuntimeLibs()
+    //   历史遗留——曾把 libQnnHtp.so / libQnnHtpV73Stub.so / libQnnSystem.so / libQnnHtpPrepare.so(85MB)
+    //   从 APK 复制到 modelDir（Android/data/.../files/models/），在外部存储白占 ~96MB。
+    //   RmbgOnnxEngine 实际从 nativeLibraryDir 加载 QNN 库，此复制从未被使用，已移除。
 
     fun isModelDownloaded(): Boolean {
         // QNN EPContext：检查 onnx + bin 是否都就位（按当前选中 QNN 模型）
@@ -1243,6 +1250,13 @@ object ModelManager {
         val order = (start until mirrors.size) + (0 until start)
 
         for (idx in order) {
+            // ★ 支持取消：已请求取消则不继续尝试其他镜像
+            if (cancelRequested) {
+                activeMirrorIndex = -1
+                val cancelErr = CancellationException("下载已取消")
+                mainHandler.post { listener?.onError(cancelErr) }
+                return@withContext false
+            }
             val mirror = mirrors[idx]
             activeMirrorIndex = idx
             val baseUrl = "${mirror.baseUrl}/$hfRepo/resolve/main/$hfFile"
@@ -1253,6 +1267,11 @@ object ModelManager {
             }
 
             try {
+                // ★ 下载前快速连通性检查：不可达的镜像直接跳过，避免等待 connectTimeout(30s)
+                if (!quickProbe(mirror.baseUrl)) {
+                    mirrorFailed("网络不可达（${mirror.name}）")
+                    continue
+                }
                 mainHandler.post { listener?.onMirrorSwitch(idx, mirror.name) }
 
                 // 请求构建：带 HF Token（下载 gated 模型如 RMBG-2.0 必需）
@@ -1533,6 +1552,12 @@ object ModelManager {
                             var read: Int
                             var written = 0L
                             while (input.read(buf).also { read = it } != -1) {
+                                // ★ 支持取消：检测到取消请求立即停止读取
+                                if (cancelRequested) {
+                                    out.flush()
+                                    out.close()
+                                    return@use 0L
+                                }
                                 out.write(buf, 0, read)
                                 written += read
                                 val d = done.addAndGet(read.toLong())
