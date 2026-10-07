@@ -1,0 +1,32 @@
+# Gradle / AGP
+.gradle/
+build/
+app/build/
+.kotlin/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 临时与备份
+*.bak
+*.bak2
+*.corrupt.bak
+/tmp/
+
+# 大体积中间产物（仅保留源码与资产清单）
+*.log
+
+# 逆向/解码中间产物（不属于工程源码）
+jadx_out/
+decode_*.py
+
+# ★ 大体积模型二进制（QNN EPContext 编译产物，不入库；构建时由脚本/HF 拉取）
+app/src/normal/assets/qnn/*.bin
+
+# ★ 签名私钥（务必保密，绝不入库）
+keystore/
+keystore.properties
+
