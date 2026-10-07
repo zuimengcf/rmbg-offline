@@ -11,7 +11,6 @@
 - [模型矩阵](#模型矩阵)
 - [环境要求](#环境要求)
 - [快速构建](#快速构建)
-- [签名配置](#签名配置)
 - [模型资产说明](#模型资产说明)
 - [目录结构](#目录结构)
 - [技术架构](#技术架构)
@@ -81,7 +80,7 @@
 # 2. 打包 Debug APK
 ./gradlew :app:assembleNormalDebug :app:assembleLiteDebug
 
-# 3. 打包 Release APK（需先配置签名，见下）
+# 3. 打包 Release APK
 ./gradlew :app:assembleNormalRelease :app:assembleLiteRelease
 ```
 
@@ -95,20 +94,6 @@ normal 版的 QNN 模型二进制（`.bin`，约 197MB）**不入 git 仓库**�
 
 > Lite 版不内置任何模型，构建无需下载。
 
-## 签名配置
-
-签名证书与密码存于项目根的 `keystore.properties`（**已被 .gitignore 忽略，绝不入库**）：
-
-```properties
-storeFile=keystore/your.jks
-storePassword=your_store_pass
-keyAlias=your_alias
-keyPassword=your_key_pass
-```
-
-- 未配置 `keystore.properties` 时，release 构建产出 **unsigned** APK（可用 `apksigner` 手动签名）
-- 密钥一旦丢失无法找回（Android 升级 / 上架依赖同一把钥匙），请妥善备份
-
 ## 模型资产说明
 
 | 资产 | 存放位置 | 是否入库 | 说明 |
@@ -117,7 +102,6 @@ keyPassword=your_key_pass
 | QNN 模型 `.bin`（EPContext，197MB） | `app/src/normal/assets/qnn/` | ❌ 忽略 | normal 构建时自动从 HF 拉取 |
 | QNN 运行时 `.so`（133MB） | `app/src/main/assets/qnnlibs/` | ✅ 入库 | HTP backend/stub/skel v68-v81 全套 |
 | SD 原生库 | `app/src/main/jniLibs/` | ✅ 入库 | AI 重绘用 |
-| 签名密钥 | `keystore/` | ❌ 忽略 | 务必保密 |
 
 ## 目录结构
 
@@ -145,7 +129,6 @@ rmbg-offline-apk/
 │       └── normal/assets/qnn/          # ★ normal 版 QNN .bin（构建时自动下载）
 ├── .github/workflows/                  # CI：release-apk.yml
 ├── gradle/                             # Gradle wrapper
-├── keystore/                           # 签名（不入库）
 └── build.gradle.kts
 ```
 
