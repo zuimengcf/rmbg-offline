@@ -1,0 +1,1746 @@
+package com.rmbg.offline.ml
+
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import com.rmbg.offline.BuildConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * RMBG 模型下载管理器
+ *
+ * 支持：
+ * 1. 多镜像源自动切换（hf-mirror.com 国内镜像优先，官方兜底）
+ * 2. 多线程分块下载（并行 Range 请求，默认 4 连接）
+ * 3. 断点续传（.part 文件自动续传）
+ * 4. 内置多模型（RMBG-1.4 FP32/FP16/量化 + RMBG-2.0）
+ * 5. 所有回调切主线程，避免 IO 线程操作 UI 闪退
+ */
+object ModelManager {
+
+    /** 镜像源信息 */
+    data class Mirror(
+        val name: String,
+        val baseUrl: String,
+        val description: String
+    )
+
+    /** 模型类型：CPU（普通 ONNX，可 NNAPI 加速） / QNN（EPContext 离线编译产物，走骁龙 DSP） */
+    enum class ModelKind { CPU, QNN }
+
+    /** 内置模型信息 */
+    data class BuiltinModel(
+        val id: String,
+        val name: String,
+        val hfRepo: String,
+        val hfFile: String,
+        val sizeBytes: Long,
+        val description: String,
+        val kind: ModelKind = ModelKind.CPU,
+        // ---- QNN EPContext 专用（kind=QNN 时有效）----
+        val assetOnnx: String? = null,      // assets 内 onnx 路径（ep_cache_context 引用 bin 名）
+        val assetBin: String? = null,       // assets 内 bin 路径
+        val hfBinFile: String? = null,      // HF 仓库内 bin 路径（双轨下载用；null=由 hfFile 同目录推断）
+        val deployOnnxName: String? = null, // 部署到模型目录后的 onnx 文件名（null=用 asset 文件名）
+        val deployBinName: String? = null   // 部署到模型目录后的 bin 文件名（★必须与 onnx 内 ep_cache_context 引用一致）
+    ) {
+        val isQnn: Boolean get() = kind == ModelKind.QNN
+    }
+
+    /** CPU 模型列表（普通 ONNX，CPU / NNAPI 推理） */
+    val cpuModels = listOf(
+        BuiltinModel(
+            id = "rmbg14_fp32",
+            name = "RMBG-1.4",
+            hfRepo = "briaai/RMBG-1.4",
+            hfFile = "onnx/model.onnx",
+            sizeBytes = 176_153_355L,
+            description = "通用抠图 · 官方原版 · 176MB"
+        ),
+        BuiltinModel(
+            id = "rmbg20",
+            name = "RMBG-2.0",
+            hfRepo = "briaai/RMBG-2.0",
+            hfFile = "onnx/model_fp16.onnx",
+            sizeBytes = 513_576_499L,
+            description = "BiRefNet 最强 · 513MB（需 HF Token）"
+        ),
+        BuiltinModel(
+            id = "modnet",
+            name = "MODNet",
+            hfRepo = "Xenova/modnet",
+            hfFile = "onnx/model.onnx",
+            sizeBytes = 25_888_640L,
+            description = "人像抠图 · 轻量快速 · 25MB"
+        ),
+        BuiltinModel(
+            id = "anime_seg",
+            name = "Anime-Seg",
+            hfRepo = "skytnt/anime-seg",
+            hfFile = "isnetis.onnx",
+            sizeBytes = 176_069_933L,
+            description = "动漫人物抠图 · ISNet · 176MB"
+        )
+    )
+
+    /** QNN 模型列表（EPContext 离线编译产物，HTP DSP 加速，无需在线编译）
+     *  ★ App 规范命名：qnn_<model>_<soc/后缀>，onnx 内 ep_cache_context 引用与 bin 同名 */
+    val qnnModels = listOf(
+        BuiltinModel(
+            id = "qnn_rmbg14_v2",
+            name = "RMBG-1.4 QNN v2",
+            hfRepo = "zuimengqm/rmbg-qnn-rmbg14",
+            hfFile = "qnn/qnn_rmbg14_sdk250_v2.onnx",
+            hfBinFile = "qnn/qnn_rmbg14_sdk250_v2.bin",
+            sizeBytes = 99_079_792L + 855L,
+            description = "RMBG-1.4 · SDK250 离线编译 · 99MB（新版）",
+            kind = ModelKind.QNN,
+            assetOnnx = "qnn/qnn_rmbg14_sdk250_v2.onnx",
+            assetBin = "qnn/qnn_rmbg14_sdk250_v2.bin",
+            deployOnnxName = "qnn_rmbg14_sdk250_v2.onnx",
+            deployBinName = "qnn_rmbg14_sdk250_v2.bin"
+        ),
+        BuiltinModel(
+            id = "qnn_animeseg",
+            name = "Anime-Seg QNN-HTP",
+            hfRepo = "zuimengqm/rmbg-qnn-animeseg",
+            hfFile = "qnn/qnn_animeseg_v73.onnx",
+            hfBinFile = "qnn/qnn_animeseg_v73.bin",
+            sizeBytes = 90_789_176L + 814L,
+            description = "Anime-Seg · ISNet · SM8550/V73 离线编译 · 87MB",
+            kind = ModelKind.QNN,
+            assetOnnx = "qnn/qnn_animeseg_v73.onnx",
+            assetBin = "qnn/qnn_animeseg_v73.bin",
+            deployOnnxName = "qnn_animeseg_v73.onnx", // ★=onnx 内 ep_cache_context 引用一致
+            deployBinName = "qnn_animeseg_v73.bin" // ★=onnx 内 ep_cache_context 引用（已规范化）
+        ),
+        BuiltinModel(
+            id = "qnn_modnet",
+            name = "MODNet QNN-HTP",
+            hfRepo = "zuimengqm/rmbg-qnn-modnet",
+            hfFile = "qnn/qnn_modnet_sm8550_512.onnx",
+            hfBinFile = "qnn/qnn_modnet_sm8550_512.bin",
+            sizeBytes = 15_930_872L + 841L,
+            description = "MODNet · 512×512 · SM8550/V73 离线编译 · 15MB",
+            kind = ModelKind.QNN,
+            assetOnnx = "qnn/qnn_modnet_sm8550_512.onnx",
+            assetBin = "qnn/qnn_modnet_sm8550_512.bin",
+            deployOnnxName = "qnn_modnet_sm8550_512.onnx", // App 规范名
+            deployBinName = "qnn_modnet_sm8550_512.bin" // ★=onnx 内 ep_cache_context 引用（已规范化）
+        )
+    )
+
+    /** 全部内置模型（CPU + QNN），保持旧引用兼容
+     *  ★ Lite 精简版：只保留 anime_seg（CPU）+ 三个 QNN（onnx 内置、bin 云下载），
+     *    其余 CPU 模型（rmbg14_fp32/rmbg20/modnet）本来就是 HF 云下载，不内置也能用，
+     *    但为贴合「只内置 anime」策略，Lite 下直接隐藏这些 CPU 模型列表项 */
+    val builtinModels: List<BuiltinModel> = if (BuildConfig.IS_LITE) {
+        listOf(
+            cpuModels.find { it.id == "anime_seg" }!!,
+            qnnModels.find { it.id == "qnn_rmbg14_v2" }!!,
+            qnnModels.find { it.id == "qnn_animeseg" }!!,
+            qnnModels.find { it.id == "qnn_modnet" }!!
+        )
+    } else {
+        cpuModels + qnnModels
+    }
+
+    /** 本地导入的模型（非内置，用户通过 SAF 导入的 .onnx） */
+    data class LocalModel(
+        val id: String,
+        val displayName: String,
+        val fileName: String,
+        val sizeBytes: Long
+    )
+
+    @Volatile
+    private var _localModels: List<LocalModel>? = null
+
+    /** 扫描本地导入的模型文件（models 目录下 model_local_*.onnx） */
+    fun localModels(): List<LocalModel> {
+        _localModels?.let { return it }
+        val dir = modelDir()
+        val list = dir.listFiles()
+            ?.filter { it.name.startsWith("model_local_") && it.name.endsWith(".onnx") }
+            ?.map { f ->
+                // ★ 模型总大小 = onnx + 配套 EPContext bin（onnx 本身仅几百字节，bin 可达 1GB+，
+                //   只显示 onnx 会显示 0KB 误导用户）
+                var total = f.length()
+                try {
+                    val binRef = extractEpCacheContext(f)
+                    if (binRef != null) {
+                        val bin = File(dir, binRef)
+                        if (bin.exists()) total += bin.length()
+                    }
+                } catch (_: Exception) {}
+                LocalModel(
+                    id = "local_${f.name.removePrefix("model_local_").removeSuffix(".onnx")}",
+                    displayName = f.name.removePrefix("model_local_").removeSuffix(".onnx"),
+                    fileName = f.name,
+                    sizeBytes = total
+                )
+            } ?: emptyList()
+        _localModels = list
+        return list
+    }
+
+    /** 导入本地模型文件到模型目录（返回 id，失败返回 null） */
+    fun importLocalModel(src: File, displayName: String): String? {
+        return try {
+            val safeName = displayName.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "model" }
+            val dest = File(modelDir(), "model_local_$safeName.onnx")
+            src.copyTo(dest, overwrite = true)
+            _localModels = null // 失效缓存
+            "local_$safeName"
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "导入失败", e)
+            null
+        }
+    }
+
+    /**
+     * 从 zip 导入 QNN 模型（onnx + 配套 .bin 一起打包）。
+     * 解压后把 .onnx 导入为本地模型，并把 onnx 内部 ep_cache_context 引用的 .bin
+     * 放到模型目录（与 onnx 同目录，embed_mode=0 要求）。
+     *
+     * @param zipFile zip 源文件
+     * @param displayName 模型显示名（zip 主 onnx 的 basename）
+     * @return 导入的本地模型 id（失败返回 null）
+     */
+    fun importLocalModelZip(zipFile: File, displayName: String): String? {
+        var result: String? = null
+        val tmpDir = File(zipFile.parentFile ?: cacheDirForImport(), "zip_import_${System.currentTimeMillis()}")
+        try {
+            tmpDir.mkdirs()
+            // 1) 解压 zip（限制总量防 zip 炸弹；QNN EPContext 的 bin 可达 1GB+，上限放宽到 4GB）
+            var totalBytes = 0L
+            java.util.zip.ZipFile(zipFile).use { zf ->
+                val entries = zf.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    val name = entry.name
+                    if (entry.isDirectory) continue
+                    // 只处理 onnx 与 bin（其余如 meta 忽略）
+                    if (!name.endsWith(".onnx", ignoreCase = true) &&
+                        !name.endsWith(".bin", ignoreCase = true)) continue
+                    totalBytes += entry.size
+                    if (totalBytes > 4L * 1024 * 1024 * 1024) { // 4GB 上限（容纳 1GB+ 的 QNN bin，防 zip 炸弹）
+                        android.util.Log.e("RMBG-MODEL", "zip 解压超限，中止")
+                        return@importLocalModelZip null
+                    }
+                    // 防路径穿越：只取文件名
+                    val baseName = name.substringAfterLast('/').substringAfterLast('\\')
+                    if (baseName.isEmpty()) continue
+                    val outFile = File(tmpDir, baseName)
+                    zf.getInputStream(entry).use { input ->
+                        outFile.outputStream().use { out -> input.copyTo(out) }
+                    }
+                }
+            }
+
+            // 2) 找出主 onnx（优先用 displayName 对应的，否则第一个 .onnx）
+            val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) }
+                ?: emptyArray()
+            if (onnxFiles.isEmpty()) {
+                android.util.Log.e("RMBG-MODEL", "zip 内无 .onnx 文件")
+                return@importLocalModelZip null
+            }
+            val mainOnnx = onnxFiles.firstOrNull { it.nameWithoutExtension == displayName }
+                ?: onnxFiles[0]
+
+            // ★ bin 引用规范化说明：QNN SDK 在开发机导出的 EPContext 其 ep_cache_context 可能是绝对路径，
+            //   ORT 1.30 强制要求 ep_cache_context 必须是相对路径（否则 createSession 报 ORT_INVALID_GRAPH）。
+            //   因此：① bin 以 basename 复制到模型目录（embed_mode=0 要求同目录同名）
+            //        ② onnx 内嵌绝对路径在导入时用 normalizeEpContextPath 改写为 basename。
+
+            // 3) 导入 onnx 为本地模型
+            val safeName = displayName.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "model" }
+            val destOnnx = File(modelDir(), "model_local_$safeName.onnx")
+            mainOnnx.copyTo(destOnnx, overwrite = true)
+
+            // 4) 若 onnx 是 EPContext，提取引用的 bin 名，并从解压内容中找到对应 bin 放置到模型目录
+            //    ★ 匹配策略（QNN SDK 命名差异兼容）：
+            //      ① 精确等于 binRef（如 rmbg20.bin）
+            //      ② 文件名包含 binRef（如 rmbg20_net_qnn_ctx.bin 对应引用 rmbg20.bin）
+            //      ③ 唯一 .bin 兜底（onnx 引用名与 zip 内命名差异较大时）
+            val binRef = extractEpCacheContext(mainOnnx)
+            val binFiles = tmpDir.listFiles { _, n -> n.endsWith(".bin", ignoreCase = true) } ?: emptyArray()
+            val binSrc = when {
+                binRef != null -> binFiles.firstOrNull { it.name.equals(binRef, ignoreCase = true) }
+                    ?: binFiles.firstOrNull { it.name.contains(binRef, ignoreCase = true) }
+                    ?: binFiles.firstOrNull { binRef.contains(it.nameWithoutExtension, ignoreCase = true) }
+                else -> null
+            } ?: binFiles.firstOrNull() // 无引用或匹配失败时，唯一 bin 兜底
+            if (binSrc != null) {
+                // bin 名必须以 onnx 内部引用为准（embed_mode=0 要求），复制并改名
+                val destName = binRef ?: binSrc.name
+                val destBin = File(modelDir(), destName)
+                binSrc.copyTo(destBin, overwrite = true)
+                if (binRef == null) {
+                    android.util.Log.w("RMBG-MODEL", "EPContext 未提取到 bin 引用名，按解压名原样放置: ${binSrc.name}")
+                }
+                // ★★ 关键：把 onnx 内嵌的绝对/子目录路径改写为 basename（ORT 1.30 强制相对路径）
+                if (normalizeEpContextPath(destOnnx)) {
+                    android.util.Log.i("RMBG-MODEL", "zip 导入 EPContext 路径已规范化 -> $destName")
+                }
+                // ★ 检测 bin 是否为 QNN 工具链 tar 权重包（POSIX tar，偏移 257 处有 "ustar"）：
+                //   ORT QNN EP 只认 qnn-context-binary-generator 直接输出的 context binary（v2 二进制），
+                //   不认 tar 权重包 → createSession 报 "Failed to get context binary info"。
+                //   此处提前识别并给出清晰提示（不影响导入，用户可据此换正确模型包）。
+                try {
+                    if (destBin.length() > 300) {
+                        val head = destBin.readBytes().take(300).toByteArray()
+                        val isTar = head[257] == 'u'.code.toByte() && head[258] == 's'.code.toByte() &&
+                            head[259] == 't'.code.toByte() && head[260] == 'a'.code.toByte() && head[261] == 'r'.code.toByte()
+                        if (isTar) {
+                            android.util.Log.w("RMBG-MODEL",
+                                "⚠️ 检测到 $destName 是 QNN 工具链 tar 权重包（POSIX tar），ORT QNN EP 无法加载（需要 context binary）。请使用 qnn-context-binary-generator 输出的 .bin")
+                        }
+                    }
+                } catch (_: Exception) {}
+            } else if (binRef != null) {
+                android.util.Log.e("RMBG-MODEL", "EPContext 引用 bin=$binRef 但 zip 内无 .bin 文件")
+            }
+
+            _localModels = null // 失效缓存
+            result = "local_$safeName"
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "zip 导入失败", e)
+            result = null
+        } finally {
+            try { tmpDir.deleteRecursively() } catch (_: Exception) {}
+        }
+        return result
+    }
+
+
+    /** zip 导入时临时目录兜底（zipFile.parentFile 可能为 null 时的临时缓存） */
+    private fun cacheDirForImport(): File = File(System.getProperty("java.io.tmpdir") ?: ".", "rmbg_import_cache").apply { mkdirs() }
+
+
+    /** 删除本地导入的模型 */
+    fun deleteLocalModel(id: String): Boolean {
+        val f = File(modelDir(), "model_$id.onnx")
+        val ok = f.delete()
+        _localModels = null
+        _compatCache.remove(id) // 清兼容性缓存
+        return ok
+    }
+
+    // ================= 模型加速兼容性探测（导入时标注：QNN/NNAPI 支不支持）=================
+    /** 加速支持程度 */
+    enum class AccelSupport {
+        QNN_EPCONTEXT,  // EPContext 形态，QNN 强推荐
+        QNN_TRY,        // QDQ 量化且无风险算子，QNN 可尝试（失败自动降级 CPU）
+        QNN_RISKY,      // 含 HTP 风险算子，QNN 大概率不支持
+        CPU_ONLY        // 无量化 / 完全不适用，仅 CPU/NNAPI
+    }
+
+    /** 探测结果（供 UI 标注展示） */
+    data class ModelCompatibility(
+        val support: AccelSupport,
+        val qnnLabel: String,
+        val nnapiLabel: String,
+        val desc: String
+    )
+
+    /** 本地模型兼容性缓存（按 id） */
+    private val _compatCache = java.util.concurrent.ConcurrentHashMap<String, ModelCompatibility>()
+
+    /** 清缓存（导入/删除后调用） */
+    fun clearCompatCache() { _compatCache.clear() }
+
+    /**
+     * 探测本地模型加速兼容性。
+     * @param deep 是否做全文件字节扫描（IO 重，需后台线程）；false 只按文件名快判
+     */
+    fun probeLocalModelCompat(lm: LocalModel, deep: Boolean = true): ModelCompatibility {
+        _compatCache[lm.id]?.let { return it }
+        val compat = computeCompat(File(modelDir(), lm.fileName), deep)
+        _compatCache[lm.id] = compat
+        return compat
+    }
+
+    /** 探测任意 .onnx 文件 */
+    fun probeModelCompat(file: File, deep: Boolean = true): ModelCompatibility = computeCompat(file, deep)
+
+    private fun computeCompat(file: File, deep: Boolean): ModelCompatibility {
+        // 1) EPContext：onnx 内容含 EPContext 节点 + 配套 .bin 存在 → QNN 强推荐（不再死认文件名前缀）
+        val isEpContext = scanForBytes(file, listOf("EPContext", "ep_cache_context"))
+        if (isEpContext) {
+            val binName = extractEpCacheContext(file)
+            val binOk = binName != null && File(modelDir(), binName).exists()
+            if (binOk) {
+                return ModelCompatibility(
+                    AccelSupport.QNN_EPCONTEXT,
+                    "✅ QNN (EPContext)",
+                    "❌ NNAPI 不适用",
+                    "骁龙 DSP 离线编译产物，最推荐"
+                )
+            }
+            return ModelCompatibility(
+                AccelSupport.QNN_EPCONTEXT,
+                "✅ QNN (EPContext)",
+                "❌ NNAPI 不适用",
+                "EPContext 产物（缺 .bin，需部署）"
+            )
+        }
+        val name = file.name.lowercase()
+        // 2) 文件名快判：含量化关键词 → 疑似 QDQ，deep 扫描进一步确认
+        val nameHintQdq = listOf("qnn", "qdq", "quant", "int8", "uint8", "s8w", "16a8w")
+            .any { name.contains(it) }
+        // 3) deep 扫描：QDQ 量化算子 + HTP 风险算子
+        val hasQdq = nameHintQdq || scanForBytes(file, listOf("QuantizeLinear", "DequantizeLinear", "ConvInteger"))
+        if (!hasQdq) {
+            return ModelCompatibility(
+                AccelSupport.CPU_ONLY,
+                "❌ QNN 不适用",
+                "✅ NNAPI 可尝试",
+                "无量化（FP32/FP16），HTP 仅吃 QDQ 量化模型"
+            )
+        }
+        // 4) QDQ 模型：深扫 HTP 风险算子（不支持就标激进，避免在线编译 abort）
+        if (deep && scanForBytes(file, HTP_RISKY_OPS)) {
+            return ModelCompatibility(
+                AccelSupport.QNN_RISKY,
+                "⚠️ QNN 有风险",
+                "❌ NNAPI 不适用",
+                "含 HTP 风险算子，在线编译可能失败，建议仅 CPU"
+            )
+        }
+        return ModelCompatibility(
+            AccelSupport.QNN_TRY,
+            "⚠️ QNN 可尝试",
+            "❌ NNAPI 不适用",
+            "QDQ 量化模型，QNN 会尝试 HTP，失败自动降级 CPU"
+        )
+    }
+
+    /** HTP 大概率不支持的算子（白名单外风险项） */
+    private val HTP_RISKY_OPS = listOf(
+        "RandomNormal", "RandomUniform", "Multinomial", "NonMaxSuppression", "RoiAlign",
+        "If", "Loop", "Scan", "DynamicQuantizeLinear", "StringNormalizer", "Unique",
+        "EyeLike", "Trilu", "BitShift", "TopK", "NonZero", "CumSum", "RandomNormalLike",
+        "RandomUniformLike", "Det", "LpPool", "MaxRoiPool", "Mod", "Round", "Sign"
+    )
+
+    /** 从 EPContext onnx 内容提取 ep_cache_context 属性值（bin 文件名）。
+     *  protobuf 结构：... 0a <len> "ep_cache_context" 22 <len> "<bin文件名>" a0 01 03 ...
+     *  只取字段 2(s) 的 string，且校验是合法文件名，防止误读相邻字段。
+     *  ★ 兼容绝对路径：QNN SDK 导出的 EPContext 常把 bin 引用写成完整路径
+     *   （如 /run/csi/.../models/rmbg2/rmbg20.bin），此时提取 basename（rmbg20.bin）。 */
+    fun extractEpCacheContext(file: File): String? {
+        if (!file.exists() || file.length() == 0L || file.length() > 8L * 1024 * 1024) return null
+        return try {
+            val bytes = file.readBytes()
+            val key = "ep_cache_context".toByteArray(Charsets.UTF_8)
+            val start = indexOfBytes(bytes, key, 0, bytes.size)
+            if (start < 0) return null
+            // 从 key 后开始找 0x22（field 2, wire type 2 = length-delimited string）
+            var i = start + key.size
+            while (i < bytes.size - 2) {
+                if (bytes[i] == 0x22.toByte()) {
+                    val len = bytes[i + 1].toInt() and 0xFF
+                    if (len > 0 && i + 2 + len <= bytes.size) {
+                        val raw = String(bytes, i + 2, len, Charsets.UTF_8)
+                        // 取 basename（兼容绝对路径），再校验合法文件名字符且以 .bin 结尾
+                        val name = raw.substringAfterLast('/').substringAfterLast('\\')
+                        if (name.endsWith(".bin") && name.length > 4 &&
+                            name.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' }) {
+                            return name
+                        }
+                    }
+                }
+                i++
+            }
+            null
+        } catch (_: Exception) { null }
+    }
+
+        /**
+     * 规范化 EPContext onnx 内嵌的 ep_cache_context 路径：绝对路径 → 相对 basename。
+     *
+     * ★★ 为什么必须做：ORT 1.30 加载 EPContext（embed_mode=0 外部模式）时强制要求
+     *    ep_cache_context 必须是相对路径（报错 ORT_INVALID_GRAPH：
+     *    "External mode should set ep_cache_context field with a relative path"）。
+     *    QNN SDK 在开发机导出的 EPContext 常内嵌绝对路径（如 /run/csi/.../rmbg20.bin），
+     *    直接用会 createSession 失败。runtime 按 basename 在 onnx 同目录找 bin（embed_mode=0），
+     *    因此只需把绝对路径改写为 basename 即可，bin 复制为同名放在 onnx 同目录。
+     *
+     * ★★ 实现必须是"类型感知的 protobuf 重编码"，绝不能字符串级局部替换：
+     *    protobuf 是嵌套结构，ep_cache_context 位于 AttributeProto(2a) 内，而 AttributeProto
+     *    又位于 NodeProto(0a) 内，NodeProto 又位于 GraphProto(0a) 内，GraphProto 又在
+     *    ModelProto(3a) 内。任何内层长度变化都必须同步更新所有外层的 length 前缀，
+     *    局部替换会导致外层前缀失配 → ORT 报 ORT_INVALID_PROTOBUF（已踩坑验证）。
+     *    本实现按 ONNX 类型层级（Model→Graph→Node→Attribute）逐层解析重编码：
+     *      - Model(level0)：field 7(0x3a) 是 Graph → 递归
+     *      - Graph(level1)：field 1(0x0a) 是 Node 列表 → 逐个递归；其余字段原样拷贝
+     *      - Node(level2)：field 5(0x2a) 是 Attribute 列表 → 逐个递归；其余字段原样拷贝
+     *      - Attribute(level3)：读 field 1(0x0a) name；若 name==ep_cache_context 且
+     *        field 4(0x22) s 含目录分隔符 → 替换为 basename 并重新编码
+     *    这样每层长度前缀都按重编码后真实长度重新计算，结构始终合法
+     *    （与 onnx 库输出字节级一致，已用 python 验证 + 幂等）。
+     *
+     * @return 是否发生了重写（true = 原来是绝对路径/含目录分隔符，已改写为 basename）
+     */
+    fun normalizeEpContextPath(file: File): Boolean {
+        if (!file.exists() || file.length() == 0L || file.length() > 64L * 1024 * 1024) return false
+        try {
+            val bytes = file.readBytes()
+            if (bytes.size < 16) return false
+            val changed = BooleanArray(1)
+
+            fun writeVarint(out: java.io.ByteArrayOutputStream, v: Int) {
+                var n = v
+                while (true) {
+                    var b = (n and 0x7F)
+                    n = n shr 7
+                    if (n != 0) b = b or 0x80
+                    out.write(b)
+                    if (n == 0) break
+                }
+            }
+            fun readVarint(buf: ByteArray, pos: Int): LongArray {
+                var result = 0L
+                var shift = 0
+                var i = pos
+                while (i < buf.size && shift < 64) {
+                    val b = buf[i].toInt() and 0xFF
+                    result = result or ((b.toLong() and 0x7F) shl shift)
+                    if (b and 0x80 == 0) return longArrayOf(result, (i - pos + 1).toLong())
+                    shift += 7
+                    i++
+                }
+                return longArrayOf(result, (i - pos + 1).toLong())
+            }
+            fun copyField(out: java.io.ByteArrayOutputStream, field: Int, wire: Int, payload: ByteArray) {
+                writeVarint(out, (field shl 3) or wire)
+                if (wire == 2) {
+                    writeVarint(out, payload.size)
+                    out.write(payload)
+                } else {
+                    out.write(payload)
+                }
+            }
+            // AttributeProto 重编码：读 name(field1)，若 ep_cache_context 替换 s(field4)
+            fun rewriteAttribute(buf: ByteArray): ByteArray {
+                val out = java.io.ByteArrayOutputStream()
+                var name: String? = null
+                var pos = 0
+                while (pos < buf.size) {
+                    val (tag, tagLen) = readVarint(buf, pos)
+                    pos += tagLen.toInt()
+                    val field = (tag shr 3).toInt()
+                    val wire = (tag and 0x7L).toInt()
+                    when (wire) {
+                        0 -> {
+                            val (v, vl) = readVarint(buf, pos)
+                            writeVarint(out, (field shl 3) or 0)
+                            writeVarint(out, v.toInt())
+                            pos += vl.toInt()
+                        }
+                        1 -> { copyField(out, field, 1, buf.copyOfRange(pos, pos + 8)); pos += 8 }
+                        5 -> { copyField(out, field, 5, buf.copyOfRange(pos, pos + 4)); pos += 4 }
+                        2 -> {
+                            val (len, lenLen) = readVarint(buf, pos)
+                            val pStart = pos + lenLen.toInt()
+                            val pEnd = pStart + len.toInt()
+                            val payload = buf.copyOfRange(pStart, pEnd)
+                            if (field == 1) {
+                                name = String(payload, Charsets.UTF_8)
+                                copyField(out, field, 2, payload)
+                            } else if (field == 4 && name == "ep_cache_context") {
+                                val s = String(payload, Charsets.UTF_8)
+                                if (s.contains('/') || s.contains('\\')) {
+                                    val base = s.substringAfterLast('/').substringAfterLast('\\')
+                                    if (base.endsWith(".bin") && base.length > 4 &&
+                                        base.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' }) {
+                                        copyField(out, field, 2, base.toByteArray(Charsets.UTF_8))
+                                        changed[0] = true
+                                        pos = pEnd
+                                        continue
+                                    }
+                                }
+                                copyField(out, field, 2, payload)
+                            } else {
+                                copyField(out, field, 2, payload)
+                            }
+                            pos = pEnd
+                        }
+                        else -> { out.write(buf, pos - tagLen.toInt(), buf.size - (pos - tagLen.toInt())); pos = buf.size }
+                    }
+                }
+                return out.toByteArray()
+            }
+            // NodeProto 重编码：field5(0x2a) attribute 列表递归；其余原样
+            fun rewriteNode(buf: ByteArray): ByteArray {
+                val out = java.io.ByteArrayOutputStream()
+                var pos = 0
+                while (pos < buf.size) {
+                    val (tag, tagLen) = readVarint(buf, pos)
+                    pos += tagLen.toInt()
+                    val field = (tag shr 3).toInt()
+                    val wire = (tag and 0x7L).toInt()
+                    when (wire) {
+                        0 -> {
+                            val (v, vl) = readVarint(buf, pos)
+                            writeVarint(out, (field shl 3) or 0)
+                            writeVarint(out, v.toInt())
+                            pos += vl.toInt()
+                        }
+                        1 -> { copyField(out, field, 1, buf.copyOfRange(pos, pos + 8)); pos += 8 }
+                        5 -> { copyField(out, field, 5, buf.copyOfRange(pos, pos + 4)); pos += 4 }
+                        2 -> {
+                            val (len, lenLen) = readVarint(buf, pos)
+                            val pStart = pos + lenLen.toInt()
+                            val pEnd = pStart + len.toInt()
+                            val payload = buf.copyOfRange(pStart, pEnd)
+                            val newPayload = if (field == 5) rewriteAttribute(payload) else payload
+                            copyField(out, field, 2, newPayload)
+                            pos = pEnd
+                        }
+                        else -> { out.write(buf, pos - tagLen.toInt(), buf.size - (pos - tagLen.toInt())); pos = buf.size }
+                    }
+                }
+                return out.toByteArray()
+            }
+            // GraphProto 重编码：field1(0x0a) node 列表递归；其余原样
+            fun rewriteGraph(buf: ByteArray): ByteArray {
+                val out = java.io.ByteArrayOutputStream()
+                var pos = 0
+                while (pos < buf.size) {
+                    val (tag, tagLen) = readVarint(buf, pos)
+                    pos += tagLen.toInt()
+                    val field = (tag shr 3).toInt()
+                    val wire = (tag and 0x7L).toInt()
+                    when (wire) {
+                        0 -> {
+                            val (v, vl) = readVarint(buf, pos)
+                            writeVarint(out, (field shl 3) or 0)
+                            writeVarint(out, v.toInt())
+                            pos += vl.toInt()
+                        }
+                        1 -> { copyField(out, field, 1, buf.copyOfRange(pos, pos + 8)); pos += 8 }
+                        5 -> { copyField(out, field, 5, buf.copyOfRange(pos, pos + 4)); pos += 4 }
+                        2 -> {
+                            val (len, lenLen) = readVarint(buf, pos)
+                            val pStart = pos + lenLen.toInt()
+                            val pEnd = pStart + len.toInt()
+                            val payload = buf.copyOfRange(pStart, pEnd)
+                            val newPayload = if (field == 1) rewriteNode(payload) else payload
+                            copyField(out, field, 2, newPayload)
+                            pos = pEnd
+                        }
+                        else -> { out.write(buf, pos - tagLen.toInt(), buf.size - (pos - tagLen.toInt())); pos = buf.size }
+                    }
+                }
+                return out.toByteArray()
+            }
+            // ModelProto 重编码：field7(0x3a) graph 递归；其余原样
+            fun rewriteModel(buf: ByteArray): ByteArray {
+                val out = java.io.ByteArrayOutputStream()
+                var pos = 0
+                while (pos < buf.size) {
+                    val (tag, tagLen) = readVarint(buf, pos)
+                    pos += tagLen.toInt()
+                    val field = (tag shr 3).toInt()
+                    val wire = (tag and 0x7L).toInt()
+                    when (wire) {
+                        0 -> {
+                            val (v, vl) = readVarint(buf, pos)
+                            writeVarint(out, (field shl 3) or 0)
+                            writeVarint(out, v.toInt())
+                            pos += vl.toInt()
+                        }
+                        1 -> { copyField(out, field, 1, buf.copyOfRange(pos, pos + 8)); pos += 8 }
+                        5 -> { copyField(out, field, 5, buf.copyOfRange(pos, pos + 4)); pos += 4 }
+                        2 -> {
+                            val (len, lenLen) = readVarint(buf, pos)
+                            val pStart = pos + lenLen.toInt()
+                            val pEnd = pStart + len.toInt()
+                            val payload = buf.copyOfRange(pStart, pEnd)
+                            val newPayload = if (field == 7) rewriteGraph(payload) else payload
+                            copyField(out, field, 2, newPayload)
+                            pos = pEnd
+                        }
+                        else -> { out.write(buf, pos - tagLen.toInt(), buf.size - (pos - tagLen.toInt())); pos = buf.size }
+                    }
+                }
+                return out.toByteArray()
+            }
+
+            val newBytes = rewriteModel(bytes)
+            if (!changed[0]) return false
+            // 原子写回（同目录 tmp + rename，避免写一半损坏）
+            val tmp = File(file.parentFile, file.name + ".tmp_norm")
+            try {
+                tmp.writeBytes(newBytes)
+                if (tmp.renameTo(file) || (file.delete() && tmp.renameTo(file))) {
+                    android.util.Log.i("RMBG-MODEL", "EPContext 路径已规范化 (${file.name})")
+                    return true
+                }
+                tmp.delete()
+            } catch (_: Exception) {
+                try { tmp.delete() } catch (_: Exception) {}
+            }
+            return false
+        } catch (_: Exception) {
+            return false
+        }
+    }
+
+    /** protobuf varint 编码字节数 */
+    private fun varintSize(v: Int): Int {
+        var n = v
+        var c = 1
+        while (n >= 0x80) { n = n shr 7; c++ }
+        return c
+    }
+
+    /** 分块扫描文件字节，查找任一字面量（ONNX 算子 op_type 为明文 UTF-8） */
+    private fun scanForBytes(file: File, needles: List<String>): Boolean {
+        if (!file.exists() || file.length() == 0L) return false
+        val patterns = needles.mapNotNull { it.toByteArray(Charsets.UTF_8).takeIf { b -> b.isNotEmpty() } }
+        if (patterns.isEmpty()) return false
+        val overlap = patterns.maxOf { it.size } - 1
+        val chunk = 1 shl 20 // 1MB
+        return try {
+            java.io.BufferedInputStream(java.io.FileInputStream(file), chunk).use { input ->
+                val buf = ByteArray(chunk + overlap)
+                var carry = 0
+                while (true) {
+                    val n = input.read(buf, carry, chunk)
+                    if (n <= 0) break
+                    val total = carry + n
+                    for (p in patterns) {
+                        if (indexOfBytes(buf, p, 0, total) >= 0) return true
+                    }
+                    // 保留尾部 overlap 字节作为下一次的头部（跨块匹配）
+                    carry = if (total > overlap) overlap else total
+                    System.arraycopy(buf, total - carry, buf, 0, carry)
+                }
+                // 处理最后残段
+                for (p in patterns) if (indexOfBytes(buf, p, 0, carry) >= 0) return true
+                false
+            }
+        } catch (_: Exception) { false }
+    }
+
+    /** 朴素字节查找（hay[pos] 与 needle 完全匹配） */
+    private fun indexOfBytes(hay: ByteArray, needle: ByteArray, start: Int, end: Int): Int {
+        if (needle.isEmpty() || end - start < needle.size) return -1
+        outer@ for (i in start..end - needle.size) {
+            for (j in needle.indices) {
+                if (hay[i + j] != needle[j]) continue@outer
+            }
+            return i
+        }
+        return -1
+    }
+
+    /** 分块下载并发数 */
+    private const val DOWNLOAD_THREADS = 4
+
+    /** 镜像源列表：国内优先，官方兜底 */
+    val mirrors = listOf(
+        Mirror("hf-mirror.com", "https://hf-mirror.com", "国内 HuggingFace 镜像 · 推荐"),
+        Mirror("huggingface.co", "https://huggingface.co", "官方源 · 备用")
+    )
+
+    @Volatile
+    var selectedMirrorIndex: Int = 0
+
+    @Volatile
+    var activeMirrorIndex: Int = -1
+
+    /** 可配置的模型仓库与文件路径（UI 可修改） */
+    @Volatile
+    var hfRepo: String = "briaai/RMBG-1.4"
+
+    @Volatile
+    var hfFile: String = "onnx/model.onnx"
+
+    @Volatile
+    var selectedModelId: String = "qnn_rmbg14_v2"
+
+    /** HuggingFace Token（用于下载 gated 模型，如 RMBG-2.0） */
+    @Volatile
+    var hfToken: String = ""
+
+    /** 自定义模型直链下载地址（UI 配置；非空且已下载时切换为 custom_model 走 CPU 推理） */
+    @Volatile
+    var modelUrl: String = ""
+
+    /** 自定义直链模型对应的 selectedModelId 标记（custom_model → model_custom.onnx） */
+    const val CUSTOM_MODEL_ID = "custom_model"
+
+    /** 模型文件名：内置按 id 映射；QNN EPContext 按部署文件名；本地导入的按 id（local_xxx → model_local_xxx.onnx） */
+    fun modelFileName(): String {
+        // 自定义直链模型：固定部署名 model_custom.onnx
+        if (selectedModelId == CUSTOM_MODEL_ID) return "model_custom.onnx"
+        // QNN EPContext：用 EPContext onnx 部署名（与 .bin 同目录，embed_mode=0 要求）
+        if (selectedModelId.startsWith("qnn_")) {
+            val bm = builtinModels.find { it.id == selectedModelId }
+            if (bm?.deployOnnxName != null) return bm.deployOnnxName
+        }
+        // 本地导入模型：id 形如 local_xxx，文件为 model_local_xxx.onnx
+        if (selectedModelId.startsWith("local_")) {
+            return "model_$selectedModelId.onnx"
+        }
+        val bm = builtinModels.find { it.id == selectedModelId } ?: return "model.onnx"
+        return "model_${bm.id}.onnx"
+    }
+
+    /** QNN EPContext 模型文件（按内置 id 查部署 onnx，找不到该 id 时用当前选中模型） */
+    fun qnnContextFileFor(id: String? = null): File? {
+        val bm = id?.let { i -> builtinModels.find { it.id == i } } ?: builtinModels.find { it.id == selectedModelId }
+        val name = bm?.deployOnnxName ?: return null
+        return File(modelDir(), name)
+    }
+
+    /** QNN EPContext 配套 context binary（须与 onnx 同一目录，文件名与 onnx 内 ep_cache_context 引用一致） */
+    fun qnnContextBinFileFor(id: String? = null): File? {
+        val bm = id?.let { i -> builtinModels.find { it.id == i } } ?: builtinModels.find { it.id == selectedModelId }
+        val name = bm?.deployBinName ?: return null
+        return File(modelDir(), name)
+    }
+
+    // ---- 兼容旧引用（RMBG-1.4 QNN EPContext）----
+    val qnnContextFile: File get() = qnnContextFileFor("qnn_rmbg14_v2") ?: File(modelDir(), "qnn_rmbg14_sdk250_v2.onnx")
+    val qnnContextBinFile: File get() = qnnContextBinFileFor("qnn_rmbg14_v2") ?: File(modelDir(), "qnn_rmbg14_sdk250_v2.bin")
+
+    /** 模型文件（按当前选中模型动态指向） */
+    val modelFile: File get() = File(modelDir(), modelFileName())
+
+    /** 模型目录（★外部存储，用户可直接访问：/storage/emulated/0/Android/data/com.rmbg.offline/files/models）
+     *  默认兜底同路径（initContext 会用 getExternalFilesDir 覆盖） */
+    @Volatile
+    private var _modelDir: File? = null
+
+    fun modelDir(): File {
+        _modelDir?.let { return it }
+        // ★ 兜底路径：normal=com.rmbg.offline；lite=com.rmbg.offline.lite
+        //   仅 initContext 未调用时兜底（正常流程 initContext 用 getExternalFilesDir 已覆盖）
+        return File(
+            android.os.Environment.getExternalStorageDirectory(),
+            "Android/data/${if (BuildConfig.IS_LITE) "com.rmbg.offline.lite" else "com.rmbg.offline"}/files/models"
+        )
+    }
+
+    /** 用 Context 初始化模型目录路径（★外部存储：/storage/emulated/0/Android/data/<pkg>/files/models，
+     *  用户文件管理器可直接访问，App 无需存储权限；这是标准 getExternalFilesDir 用法） */
+    fun initContext(context: Context) {
+        _modelDir = context.getExternalFilesDir(null)?.let { File(it, "models") }
+            ?: File(context.filesDir, "models") // 兜底：外部不可用时退回内部
+        _modelDir?.mkdirs()
+    }
+
+    /** 确保 QNN EPContext 产物已就位（从 assets 拷贝到模型目录，.onnx 与 .bin 须同目录）
+     *  @param modelId 内置 QNN 模型 id（默认当前选中；传 null 表示当前选中模型不是 QNN 时用 RMBG-1.4） */
+    fun ensureQnnContext(context: Context, modelId: String? = null): Boolean {
+        val bm = (modelId?.let { builtinModels.find { m -> m.id == it } }
+            ?: builtinModels.find { it.id == selectedModelId })
+            ?: builtinModels.find { it.isQnn }
+            ?: return false
+        val onnxAsset = bm.assetOnnx ?: return false
+        val binAsset = bm.assetBin ?: return false
+        val onnxDst = qnnContextFileFor(bm.id) ?: return false
+        val binDst = qnnContextBinFileFor(bm.id) ?: return false
+        val dir = modelDir().also { it.mkdirs() }
+        return try {
+            // onnx（EPContext 头，约 0.8~1KB）
+            // ★ 注意：不能用 openFd() 取 assets 大小！debug 构建 AAPT 会压缩大文件，
+            //   openFd 会抛 "can not be opened as a file descriptor; it is probably compressed"。
+            //   因此不比较大小：v1/v2 用独立文件名天然隔离，文件存在且有效即跳过。
+            if (!onnxDst.exists() || onnxDst.length() < 100) {
+                context.assets.open(onnxAsset).use { src ->
+                    onnxDst.outputStream().use { dst -> src.copyTo(dst) }
+                }
+            }
+            // bin（context binary，15~99MB）
+            if (!binDst.exists() || binDst.length() < 1_000_000) {
+                context.assets.open(binAsset).use { src ->
+                    binDst.outputStream().use { dst -> src.copyTo(dst) }
+                }
+            }
+            // ★ QNN EP 插件：从 APK native lib 复制到模型目录（extractNativeLibs=false 时 nativeLibraryDir 无实体文件，
+            //   registerExecutionProviderLibrary 需要真实文件路径）
+            val pluginSrc = File(context.applicationInfo.nativeLibraryDir, "libonnxruntime_providers_qnn.so")
+            val pluginDst = qnnPluginFile
+            if (pluginSrc.exists() && (!pluginDst.exists() || pluginDst.length() != pluginSrc.length())) {
+                pluginSrc.copyTo(pluginDst, overwrite = true)
+            } else if (!pluginSrc.exists()) {
+                // 兜底：extractNativeLibs=false，插件在 APK 内 lib/arm64-v8a/，用 ZipFile 提取
+                try {
+                    val apkPath = context.applicationInfo.sourceDir
+                    java.util.zip.ZipFile(apkPath).use { zf ->
+                        val entry = zf.getEntry("lib/arm64-v8a/libonnxruntime_providers_qnn.so")
+                            ?: zf.getEntry("lib/arm64/libonnxruntime_providers_qnn.so")
+                        if (entry != null && (!pluginDst.exists() || pluginDst.length() != entry.size)) {
+                            zf.getInputStream(entry).use { src ->
+                                pluginDst.outputStream().use { dst -> src.copyTo(dst) }
+                            }
+                        }
+                    }
+                } catch (ze: Exception) {
+                    android.util.Log.w("RMBG-MODEL", "APK 提取插件失败: ${ze.message}")
+                }
+            }
+            // ★ QNN runtime 库（libQnnHtp.so 等）：插件 dlopen 时需要同目录能找到依赖，一并复制到 modelDir
+            copyQnnRuntimeLibs(context)
+            onnxDst.exists() && binDst.exists() &&
+                onnxDst.length() > 100 && binDst.length() > 1_000_000
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "QNN context 拷贝失败", e)
+            false
+        }
+    }
+
+    /**
+     * ★ 双轨：确保 QNN EPContext 产物就位（assets 兜底优先，缺失时才走 HF 下载）
+     * assets 内置 onnx+bin 打包在 APK 内，无网/离线优先用内置；内置缺失或损坏时，
+     * 从 HF 仓库下载 onnx+bin（hfRepo/hfBinFile）到部署名，实现「下载型」模型。
+     * @param modelId 内置 QNN 模型 id
+     * @param listener 下载进度回调（仅 HF 下载阶段触发）
+     */
+    suspend fun ensureQnnContextDual(
+        context: Context,
+        modelId: String,
+        listener: ProgressListener? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val bm = builtinModels.find { it.id == modelId } ?: return@withContext false
+        if (!bm.isQnn) return@withContext false
+        val onnxDst = qnnContextFileFor(bm.id) ?: return@withContext false
+        val binDst = qnnContextBinFileFor(bm.id) ?: return@withContext false
+        val dir = modelDir().also { it.mkdirs() }
+
+        // ① assets 兜底拷贝（离线优先；ensureQnnContext 内部已做大小/存在校验）
+        ensureQnnContext(context, bm.id)
+
+        // ② assets 已齐 → 完成
+        if (onnxDst.exists() && onnxDst.length() > 100 && binDst.exists() && binDst.length() > 1_000_000) {
+            return@withContext true
+        }
+
+        // ③ assets 缺失/损坏 → HF 下载双文件
+        val hfRepo = bm.hfRepo
+        val hfOnnx = bm.hfFile
+        val hfBin = bm.hfBinFile ?: hfOnnx.removeSuffix(".onnx") + ".bin"
+        val mainHandler = Handler(Looper.getMainLooper())
+        val client = buildClient()
+
+        // 从 HF 镜像下载单个文件到部署目标（镜像循环 + 分块 + 断点续传，与 CPU downloadModel 同策略）
+        suspend fun downloadOne(repoId: String, repoFile: String, target: File): Boolean {
+            val start = selectedMirrorIndex.coerceIn(0, mirrors.size - 1)
+            val order = (start until mirrors.size) + (0 until start)
+            for (idx in order) {
+                val mirror = mirrors[idx]
+                val fu = "${mirror.baseUrl}/$repoId/resolve/main/$repoFile"
+                try {
+                    mainHandler.post { listener?.onMirrorSwitch(idx, mirror.name) }
+                    fun buildReq(u: String): Request {
+                        val b = Request.Builder().url(u)
+                        if (hfToken.isNotBlank()) b.header("Authorization", "Bearer $hfToken")
+                        return b.build()
+                    }
+                    // 探测总大小（Range: bytes=0-0 穿透 302 拿真实 Content-Length）
+                    var probed = 0L
+                    try {
+                        client.newCall(buildReq(fu).newBuilder().header("Range", "bytes=0-0").build())
+                            .execute().use { resp ->
+                                if (resp.isSuccessful || resp.code == 206) {
+                                    val cr = resp.header("Content-Range")
+                                    probed = cr?.substringAfter('/')?.toLongOrNull()
+                                        ?: resp.body?.contentLength() ?: 0L
+                                }
+                            }
+                    } catch (_: Exception) { probed = 0L }
+                    // 用元数据大小兜底：onnx≈sizeBytes-bin，bin=binExpected
+                    val expectSize = if (target == onnxDst) (bm.sizeBytes - binExpected(bm)).coerceAtLeast(100L)
+                        else binExpected(bm)
+                    val totalBytes = if (probed in 1 until expectSize / 2) expectSize else probed
+                    if (target == binDst && totalBytes < 1_000_000) continue // bin 至少 1MB
+                    if (target == onnxDst && totalBytes < 100) continue
+                    // 断点续传
+                    val partBase = target.name
+                    val existing = File(dir, "$partBase.part")
+                    if (existing.exists() && existing.length() >= totalBytes) {
+                        existing.renameTo(target)
+                        return@downloadOne true
+                    }
+                    // 解析 302 真实 URL（CDN 签名，Range 才生效）
+                    var realUrl = fu
+                    try {
+                        client.newCall(buildReq(fu)).execute().use { p ->
+                            if (p.code == 302 || p.code == 307 || p.code == 308)
+                                p.header("Location")?.let { realUrl = it }
+                        }
+                    } catch (_: Exception) {}
+                    val downloaded = downloadChunks(
+                        client = client, baseUrl = realUrl, totalBytes = totalBytes,
+                        dir = dir, partPrefix = partBase, token = hfToken,
+                        threads = DOWNLOAD_THREADS,
+                        onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
+                    )
+                    if (downloaded != totalBytes) continue
+                    mergeChunks(dir, partBase, totalBytes, target)
+                    return@downloadOne true
+                } catch (_: Exception) { continue }
+            }
+            return@downloadOne false
+        }
+
+        // 下载 onnx（小）→ bin（大）
+        val onnxOk = if (onnxDst.exists() && onnxDst.length() > 100) true
+            else downloadOne(hfRepo, hfOnnx, onnxDst)
+        val binOk = if (binDst.exists() && binDst.length() > 1_000_000) true
+            else downloadOne(hfRepo, hfBin, binDst)
+
+        onnxOk && binOk &&
+            onnxDst.exists() && onnxDst.length() > 100 &&
+            binDst.exists() && binDst.length() > 1_000_000
+    }
+
+    /** QNN bin 元数据大小（供 onnx 探测大小反推：sizeBytes - bin） */
+    private fun binExpected(bm: BuiltinModel): Long {
+        // sizeBytes = bin + onnx(≈1KB)，bin 约等于 sizeBytes 扣掉 onnx 头
+        return (bm.sizeBytes - 2048L).coerceAtLeast(1_000_000L)
+    }
+
+    /** QNN EP 插件文件（从 APK 复制到模型目录，供 registerExecutionProviderLibrary 使用） */
+    val qnnPluginFile: File get() = File(modelDir(), "libonnxruntime_providers_qnn.so")
+
+    /** QNN HTP backend 库（backend_path 指向，与插件同目录） */
+    val qnnHtpFile: File get() = File(modelDir(), "libQnnHtp.so")
+
+    /** 复制 QNN runtime 库（libQnnHtp.so 等）到模型目录：插件 dlopen 时同目录能找到依赖 */
+    private fun copyQnnRuntimeLibs(context: Context) {
+        val libNames = listOf("libQnnHtp.so", "libQnnHtpV73Stub.so", "libQnnSystem.so", "libQnnHtpPrepare.so")
+        try {
+            val apkPath = context.applicationInfo.sourceDir
+            java.util.zip.ZipFile(apkPath).use { zf ->
+                for (name in libNames) {
+                    val entry = zf.getEntry("lib/arm64-v8a/$name") ?: zf.getEntry("lib/arm64/$name") ?: continue
+                    val dst = File(modelDir(), name)
+                    if (!dst.exists() || dst.length() != entry.size) {
+                        zf.getInputStream(entry).use { src ->
+                            dst.outputStream().use { out -> src.copyTo(out) }
+                        }
+                        android.util.Log.i("RMBG-MODEL", "QNN runtime 库已复制: $name")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("RMBG-MODEL", "QNN runtime 库复制失败: ${e.message}")
+        }
+    }
+
+    fun isModelDownloaded(): Boolean {
+        // QNN EPContext：检查 onnx + bin 是否都就位（按当前选中 QNN 模型）
+        if (selectedModelId.startsWith("qnn_")) {
+            val o = qnnContextFileFor() ?: return false
+            val b = qnnContextBinFileFor() ?: return false
+            return o.exists() && o.length() > 100 && b.exists() && b.length() > 1_000_000
+        }
+        // ★ 本地导入的 EPContext 模型：onnx 可能只有几百字节（EPContext 头，权重在 .bin）。
+        //   只要 onnx 含 EPContext 标记且配套 bin 已就位 → 视为已下载（不走通用大小校验）。
+        if (selectedModelId.startsWith("local_")) {
+            val f = modelFile
+            if (f.exists() && f.length() > 0) {
+                val binRef = try { extractEpCacheContext(f) } catch (_: Exception) { null }
+                if (binRef != null) {
+                    val bin = File(modelDir(), binRef)
+                    return bin.exists() && bin.length() > 1_000_000
+                }
+            }
+        }
+        val f = modelFile
+        return f.exists() && f.length() > minValidSize()
+    }
+
+    /** 当前模型最小有效大小：内置元数据的 5%，至少 1MB（MODNet 25MB 也能通过校验） */
+    fun minValidSize(): Long {
+        // 自定义直链模型：至少 100KB（任意 .onnx）
+        if (selectedModelId == CUSTOM_MODEL_ID) return 100_000L
+        // QNN EPContext：onnx 本身只有 ~0.8~1KB（EPContext 头），用 bin 判断
+        if (selectedModelId.startsWith("qnn_")) {
+            return 100L
+        }
+        // 本地导入模型：按实际文件大小 5% 兜底（至少 100KB）
+        if (selectedModelId.startsWith("local_")) {
+            val f = modelFile
+            return if (f.exists()) maxOf(100_000L, f.length() / 20) else 100_000L
+        }
+        val meta = builtinModels.find { it.id == selectedModelId }?.sizeBytes ?: 176_153_355L
+        return maxOf(1_000_000L, meta / 20)
+    }
+
+    /** 检查指定内置模型是否已下载（QNN：onnx+bin 双文件；CPU：单 onnx） */
+    fun isBuiltinModelDownloaded(bm: BuiltinModel): Boolean {
+        if (bm.isQnn) {
+            val o = qnnContextFileFor(bm.id) ?: return false
+            val b = qnnContextBinFileFor(bm.id) ?: return false
+            return o.exists() && o.length() > 100 && b.exists() && b.length() > 1_000_000
+        }
+        val f = File(modelDir(), "model_${bm.id}.onnx")
+        return f.exists() && f.length() > maxOf(1_000_000L, bm.sizeBytes / 20)
+    }
+
+    /** 删除指定内置模型文件（QNN 删 onnx+bin，CPU 删 model_<id>.onnx） */
+    fun deleteBuiltinModel(bm: BuiltinModel): Boolean {
+        return try {
+            if (bm.isQnn) {
+                var ok = true
+                qnnContextFileFor(bm.id)?.let { if (it.exists()) ok = it.delete() && ok }
+                qnnContextBinFileFor(bm.id)?.let { if (it.exists()) ok = it.delete() && ok }
+                ok
+            } else {
+                val f = File(modelDir(), "model_${bm.id}.onnx")
+                if (f.exists()) f.delete() else true
+            }
+        } catch (_: Exception) { false }
+    }
+
+    /** 内置模型状态详情（供 UI 诊断：为什么没显示已下载） */
+    data class BuiltinModelStatus(
+        val bm: BuiltinModel,
+        val fileName: String,
+        val exists: Boolean,
+        val sizeBytes: Long,
+        val minValid: Long,
+        val downloaded: Boolean,
+        val reason: String
+    )
+
+    /** 逐个模型计算状态：文件名 / 是否存在 / 实际大小 / 最小有效大小 / 判定 / 原因 */
+    fun builtinModelStatus(bm: BuiltinModel): BuiltinModelStatus {
+        // QNN EPContext：特殊处理（onnx + bin 双文件）
+        if (bm.isQnn) {
+            val o = qnnContextFileFor(bm.id) ?: return BuiltinModelStatus(bm, "未知", false, 0L, 1_000_000L, false, "EPContext 配置缺失")
+            val b = qnnContextBinFileFor(bm.id) ?: o
+            val ok = o.exists() && o.length() > 100 && b.exists() && b.length() > 1_000_000
+            if (ok) {
+                return BuiltinModelStatus(bm, "${o.name} + ${b.name}", true, b.length(), 1_000_000L, true, "OK")
+            }
+            return BuiltinModelStatus(bm, "${o.name} + ${b.name}", o.exists() && b.exists(), b.length(), 1_000_000L, false,
+                "EPContext 文件缺失: ${if (!o.exists()) o.name else ""} ${if (!b.exists()) b.name else ""}")
+        }
+        val fileName = "model_${bm.id}.onnx"
+        val f = File(modelDir(), fileName)
+        val minValid = maxOf(1_000_000L, bm.sizeBytes / 20)
+        val exists = f.exists()
+        val size = if (exists) f.length() else 0L
+        val downloaded = exists && size > minValid
+        val reason = when {
+            !exists -> "文件缺失: $fileName"
+            size <= minValid -> "大小不足: ${size / 1024 / 1024}MB < ${minValid / 1024 / 1024}MB"
+            else -> "OK"
+        }
+        return BuiltinModelStatus(bm, fileName, exists, size, minValid, downloaded, reason)
+    }
+
+    /** 全量诊断报告：模型目录 + 每个内置模型状态（供 UI 诊断卡片直接展示） */
+    fun modelStatusReport(): String {
+        val sb = StringBuilder()
+        val dir = modelDir()
+        sb.append("模型目录: ").append(dir.absolutePath).append('\n')
+        sb.append("目录存在: ").append(dir.exists()).append('\n')
+        sb.append("目录内 .onnx 文件:\n")
+        dir.listFiles()?.filter { it.name.endsWith(".onnx") }?.sortedBy { it.name }?.forEach { f ->
+            sb.append("  · ").append(f.name).append(" (").append(f.length() / 1024 / 1024).append("MB)\n")
+        } ?: sb.append("  （无 .onnx 文件）\n")
+        sb.append("内置模型判定:\n")
+        builtinModels.forEach { bm ->
+            val st = builtinModelStatus(bm)
+            val tag = if (st.downloaded) "✅已下载" else "❌未下载"
+            sb.append("  · ").append(bm.name).append(" [").append(tag).append("] ")
+                .append(st.fileName).append(" → ").append(st.reason).append('\n')
+        }
+        return sb.toString()
+    }
+
+    /**
+     * ★ 内部 → 外部 模型目录迁移：
+     * 早期版本模型目录在内部 filesDir/models（/data/user/0/...，用户文件管理器进不去），
+     * 现在改用 getExternalFilesDir（/storage/emulated/0/Android/data/<pkg>/files/models，用户可访问）。
+     * App 运行时（真实 app 域）有权限写自己的外部目录，启动时调用一次把旧模型搬过来。
+     */
+    fun migrateModelsFromInternal(context: Context): Int {
+        return try {
+            val oldDir = File(context.filesDir, "models")
+            val newDir = modelDir()
+            if (!oldDir.exists() || oldDir == newDir) return 0
+            newDir.mkdirs()
+            var moved = 0
+            oldDir.listFiles()?.forEach { src ->
+                if (src.isFile) {
+                    val dst = File(newDir, src.name)
+                    if (!dst.exists() || dst.length() != src.length()) {
+                        src.copyTo(dst, overwrite = true)
+                        moved++
+                    }
+                }
+            }
+            android.util.Log.i("RMBG-MODEL", "模型迁移完成: 内部→外部 共 $moved 个文件 -> $newDir")
+            moved
+        } catch (e: Exception) {
+            android.util.Log.w("RMBG-MODEL", "模型迁移失败: ${e.message}")
+            0
+        }
+    }
+
+    interface ProgressListener {
+        fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long)
+        fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String)
+        fun onMirrorError(mirrorName: String, error: String)
+        fun onDone(file: File)
+        fun onError(e: Exception)
+    }
+
+    private fun buildClient(readTimeoutSec: Long = 120): OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .build()
+
+    /**
+     * 多线程分块下载模型
+     * @param destFile 指定下载目标文件（默认=modelFile，即当前选中模型的部署路径）
+     * @param tokenOverride 指定 HF Token（默认=null，用 ModelManager.hfToken）
+     */
+    suspend fun downloadModel(
+        context: Context,
+        hfRepo: String = ModelManager.hfRepo,
+        hfFile: String = ModelManager.hfFile,
+        destFile: File? = null,
+        tokenOverride: String? = null,
+        listener: ProgressListener? = null
+    ) = withContext(Dispatchers.IO) {
+        initContext(context)
+        val dir = destFile?.parentFile ?: modelDir()
+        if (!dir.exists()) dir.mkdirs()
+        val target = destFile ?: modelFile
+        val token = tokenOverride ?: hfToken
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val client = buildClient()
+
+        var lastError: Exception? = null
+
+        val start = selectedMirrorIndex.coerceIn(0, mirrors.size - 1)
+        val order = (start until mirrors.size) + (0 until start)
+
+        for (idx in order) {
+            val mirror = mirrors[idx]
+            activeMirrorIndex = idx
+            val baseUrl = "${mirror.baseUrl}/$hfRepo/resolve/main/$hfFile"
+
+            fun mirrorFailed(msg: String) {
+                lastError = IllegalStateException(msg)
+                mainHandler.post { listener?.onMirrorError(mirror.name, msg) }
+            }
+
+            try {
+                mainHandler.post { listener?.onMirrorSwitch(idx, mirror.name) }
+
+                // 请求构建：带 HF Token（下载 gated 模型如 RMBG-2.0 必需）
+                fun buildReq(url: String): Request {
+                    val b = Request.Builder().url(url)
+                    if (token.isNotBlank()) {
+                        b.header("Authorization", "Bearer $token")
+                    }
+                    return b.build()
+                }
+
+                // 第一步：GET + Range: bytes=0-0 探测总大小（穿透 302 拿到真实 Content-Length）
+                val probeReq = buildReq(baseUrl).newBuilder()
+                    .header("Range", "bytes=0-0")
+                    .build()
+                var probedBytes = 0L
+                try {
+                    client.newCall(probeReq).execute().use { resp ->
+                        if (!resp.isSuccessful && resp.code != 206) {
+                            mirrorFailed("HTTP ${resp.code} from ${mirror.name}")
+                            return@use
+                        }
+                        // 从 Content-Range: bytes 0-0/176153355 解析总大小
+                        val cr = resp.header("Content-Range")
+                        probedBytes = if (cr != null) {
+                            cr.substringAfter('/').toLongOrNull() ?: 0L
+                        } else {
+                            resp.body?.contentLength() ?: 0L
+                        }
+                    }
+                } catch (e: Exception) {
+                    mirrorFailed("探测失败: ${e.message}")
+                    continue
+                }
+                // 镜像可能返回异常小值（如 LFS 指针/错误重定向），以内置模型元数据兜底
+                val builtinMeta = builtinModels.find { it.id == selectedModelId }
+                val metaBytes = builtinMeta?.sizeBytes ?: 0L
+                val totalBytes = if (probedBytes in 1 until metaBytes / 2) metaBytes else probedBytes
+                // 当前模型最小有效大小：内置元数据的 5%，至少 1MB（MODNet 25MB 也能通过校验）
+                val minValid = if (destFile != null) 100_000_000L else minValidSize()
+                if (totalBytes < minValid) {
+                    mirrorFailed("文件过小(${totalBytes / 1024 / 1024}MB)")
+                    continue
+                }
+
+                // 断点续传：已有完整 .part 则跳过
+                val partBase = destFile?.name ?: modelFileName()
+                val existing = File(dir, "$partBase.part")
+                if (existing.exists() && existing.length() >= totalBytes) {
+                    existing.renameTo(target)
+                    activeMirrorIndex = idx
+                    mainHandler.post { listener?.onDone(target) }
+                    return@withContext true
+                }
+
+                // 分块下载前先解析真实下载 URL（跟随 302 拿到 CDN 签名 URL，Range 才生效）
+                var realUrl = baseUrl
+                try {
+                    val probe302 = buildReq(baseUrl)
+                    client.newCall(probe302).execute().use { p ->
+                        if (p.code == 302 || p.code == 307 || p.code == 308) {
+                            p.header("Location")?.let { realUrl = it }
+                        }
+                    }
+                } catch (_: Exception) { /* 直接用 baseUrl */ }
+
+                // 分块下载
+                val downloadedAll = downloadChunks(
+                    client = client,
+                    baseUrl = realUrl,
+                    totalBytes = totalBytes,
+                    dir = dir,
+                    partPrefix = partBase,
+                    token = token,
+                    threads = DOWNLOAD_THREADS,
+                    onProgress = { done, total, speed ->
+                        mainHandler.post { listener?.onProgress(done, total, speed) }
+                    }
+                )
+
+                if (downloadedAll != totalBytes) {
+                    mirrorFailed("下载不完整(${downloadedAll / 1024 / 1024}/${totalBytes / 1024 / 1024}MB)")
+                    continue
+                }
+
+                // 合并分块
+                mergeChunks(dir, partBase, totalBytes, target)
+                activeMirrorIndex = idx
+                mainHandler.post { listener?.onDone(target) }
+                return@withContext true
+            } catch (e: Exception) {
+                mirrorFailed("${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+
+        val err = lastError ?: IllegalStateException("所有镜像源均下载失败")
+        activeMirrorIndex = -1
+        mainHandler.post { listener?.onError(err) }
+        false
+    }
+
+    /**
+     * ★ 从自定义直链下载 ONNX 模型（模型配置面板"下载链接"入口）。
+     *   下载到 model_custom.onnx 并自动切换 selectedModelId=custom_model（走 CPU 推理）。
+     *   支持直接 .onnx 文件，或 .zip（内含 .onnx，自动解压提取首个 .onnx）。
+     * @param url 完整下载链接（http/https，可为 HF resolve 直链、CDN、任意托管）
+     */
+    suspend fun downloadModelFromUrl(
+        context: Context,
+        url: String,
+        listener: ProgressListener? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        initContext(context)
+        val dir = modelDir().also { it.mkdirs() }
+        val zipDst = File(dir, "model_custom.zip")
+        val target = File(dir, "model_custom.onnx")
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val client = buildClient()
+
+        // 请求构建（带 HF Token，gated/私有托管可能需要）
+        fun buildReq(u: String): Request {
+            val b = Request.Builder().url(u)
+            if (hfToken.isNotBlank()) b.header("Authorization", "Bearer $hfToken")
+            return b.build()
+        }
+
+        try {
+            // ① 探测总大小（Range: bytes=0-0 穿透 302 拿真实长度）
+            val probeReq = buildReq(url).newBuilder().header("Range", "bytes=0-0").build()
+            var totalBytes = 0L
+            try {
+                client.newCall(probeReq).execute().use { resp ->
+                    if (resp.isSuccessful || resp.code == 206) {
+                        val cr = resp.header("Content-Range")
+                        totalBytes = cr?.substringAfter('/')?.toLongOrNull()
+                            ?: resp.body?.contentLength() ?: 0L
+                    } else {
+                        mainHandler.post { listener?.onError(IllegalStateException("HTTP ${resp.code}")) }
+                        return@withContext false
+                    }
+                }
+            } catch (e: Exception) {
+                mainHandler.post { listener?.onError(e) }
+                return@withContext false
+            }
+            if (totalBytes < 100L) {
+                mainHandler.post { listener?.onError(IllegalStateException("文件过小或无效链接")) }
+                return@withContext false
+            }
+
+            // ② 断点续传：已有完整 model_custom.onnx 则跳过
+            if (target.exists() && target.length() >= totalBytes) {
+                selectedModelId = CUSTOM_MODEL_ID
+                mainHandler.post { listener?.onDone(target) }
+                return@withContext true
+            }
+            // 已有 .zip 完成则直接解压
+            if (zipDst.exists() && zipDst.length() >= totalBytes) {
+                val okZip = unzipCustomModel(zipDst, target)
+                if (okZip) {
+                    selectedModelId = CUSTOM_MODEL_ID
+                    mainHandler.post { listener?.onDone(target) }
+                } else {
+                    mainHandler.post { listener?.onError(IllegalStateException("压缩包解压失败（无 .onnx）")) }
+                }
+                return@withContext okZip
+            }
+
+            // ③ 解析 302 真实 URL（CDN 签名，Range 才生效）
+            var realUrl = url
+            try {
+                client.newCall(buildReq(url)).execute().use { p ->
+                    if (p.code == 302 || p.code == 307 || p.code == 308)
+                        p.header("Location")?.let { realUrl = it }
+                }
+            } catch (_: Exception) {}
+
+            // ④ 分块下载到 .part（复用多线程 Range 下载）
+            val partBase = "model_custom"
+            val downloadedAll = downloadChunks(
+                client = client, baseUrl = realUrl, totalBytes = totalBytes,
+                dir = dir, partPrefix = partBase, token = hfToken,
+                threads = DOWNLOAD_THREADS,
+                onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
+            )
+            if (downloadedAll < totalBytes) {
+                mainHandler.post { listener?.onError(IllegalStateException("下载不完整")) }
+                return@withContext false
+            }
+            // 合并分块 → 临时完整文件
+            mergeChunks(dir, partBase, totalBytes, zipDst)
+
+            // ⑤ 单 .onnx 直接 rename；.zip 解压提取 .onnx
+            val ok: Boolean
+            val lower = url.lowercase()
+            val isZipMagic = try {
+                val head = zipDst.inputStream().use { it.readNBytes(4) }
+                head.size == 4 && head[0] == 0x50.toByte() && head[1] == 0x4B.toByte()
+            } catch (_: Exception) { false }
+            if (zipDst.length() >= 100_000L && (lower.endsWith(".zip") || isZipMagic)) {
+                ok = unzipCustomModel(zipDst, target)
+            } else {
+                target.delete()
+                ok = zipDst.renameTo(target) || zipDst.copyTo(target, overwrite = true).let { true }
+            }
+            zipDst.delete()
+
+            if (!ok || !target.exists()) {
+                mainHandler.post { listener?.onError(IllegalStateException("模型文件处理失败")) }
+                return@withContext false
+            }
+            // ⑥ 切换自定义模型标记，走 CPU 链路
+            selectedModelId = CUSTOM_MODEL_ID
+            mainHandler.post { listener?.onDone(target) }
+            return@withContext true
+        } catch (e: Exception) {
+            mainHandler.post { listener?.onError(e) }
+            return@withContext false
+        }
+    }
+
+    /** 从 zip 中提取首个 .onnx 到 target（解压） */
+    private fun unzipCustomModel(zip: File, target: File): Boolean {
+        return try {
+            val zipf = java.util.zip.ZipFile(zip)
+            try {
+                val entry = zipf.entries().asSequence().filter { it.name.endsWith(".onnx") }.firstOrNull()
+                    ?: return false
+                zipf.getInputStream(entry).use { src ->
+                    val out = FileOutputStream(target)
+                    val buf = ByteArray(1 shl 20)
+                    var read: Int
+                    while (src.read(buf).also { read = it } != -1) out.write(buf, 0, read)
+                    out.flush()
+                }
+                target.length() > 100_000L
+            } finally { zipf.close() }
+        } catch (_: Exception) { false }
+    }
+
+    /** 分块下载：每块独立 Range 请求，并发写入独立 .part.N 文件 */
+    private suspend fun downloadChunks(
+        client: OkHttpClient,
+        baseUrl: String,
+        totalBytes: Long,
+        dir: File,
+        partPrefix: String,
+        token: String,
+        threads: Int,
+        onProgress: (Long, Long, Long) -> Unit
+    ): Long = coroutineScope {
+        val chunkSize = (totalBytes + threads - 1) / threads
+        val done = AtomicLong(0L)
+        val startTime = System.currentTimeMillis()
+
+        val results = (0 until threads).map { i ->
+            async(Dispatchers.IO) {
+                val start = i * chunkSize
+                val end = minOf(start + chunkSize - 1, totalBytes - 1)
+                if (start > end) return@async 0L
+                val partFile = File(dir, "$partPrefix.part.$i")
+                val reqBuilder = Request.Builder()
+                    .url(baseUrl)
+                    .header("Range", "bytes=$start-$end")
+                if (token.isNotBlank()) {
+                    reqBuilder.header("Authorization", "Bearer $token")
+                }
+                val req = reqBuilder.build()
+                try {
+                    client.newCall(req).execute().use { resp ->
+                        if (resp.code != 206 && resp.code != 200) {
+                            return@use 0L
+                        }
+                        resp.body?.byteStream()?.use { input ->
+                            val out = FileOutputStream(partFile)
+                            val buf = ByteArray(512 * 1024)
+                            var read: Int
+                            var written = 0L
+                            while (input.read(buf).also { read = it } != -1) {
+                                out.write(buf, 0, read)
+                                written += read
+                                val d = done.addAndGet(read.toLong())
+                                val now = System.currentTimeMillis()
+                                val elapsed = (now - startTime).coerceAtLeast(1)
+                                val speed = (d * 1000L / elapsed).coerceAtLeast(0)
+                                onProgress(d, totalBytes, speed)
+                            }
+                            out.flush()
+                        }
+                    }
+                    val f = partFile.length()
+                    f
+                } catch (e: Exception) {
+                    0L
+                }
+            }
+        }
+        results.awaitAll().sum()
+    }
+
+    /** 合并分块到最终文件 */
+    private fun mergeChunks(dir: File, partPrefix: String, totalBytes: Long, target: File) {
+        target.delete()
+        RandomAccessFile(target, "rw").use { raf ->
+            raf.setLength(totalBytes)
+            var offset = 0L
+            var i = 0
+            while (offset < totalBytes) {
+                val part = File(dir, "$partPrefix.part.$i")
+                if (part.exists()) {
+                    part.inputStream().use { ins ->
+                        raf.seek(offset)
+                        val buf = ByteArray(1 shl 20)
+                        var read: Int
+                        while (ins.read(buf).also { read = it } != -1) {
+                            raf.write(buf, 0, read)
+                        }
+                    }
+                    offset += part.length()
+                    part.delete()
+                } else {
+                    break
+                }
+                i++
+            }
+        }
+        // 清理残留分块
+        for (j in 0..32) {
+            File(dir, "$partPrefix.part.$j").delete()
+        }
+    }
+
+    fun deleteModel(): Boolean = modelFile.delete()
+
+    // ================= AI 重绘模型 zip 云端下载（HF）=================
+
+    /**
+     * ★ AI 重绘 SD 模型 zip 的 HF 云下载。
+     * 直接复用 [downloadModel]（镜像循环+探测+302+4线程分块+断点续传+merge）。
+     *
+     * @param repoId  HF 仓库 id，如 xororz/sd-qnn
+     * @param fileName 仓库内 zip 文件名，如 MeinaMixV12_qnn2.28_8gen2.zip
+     * @param destFile 保存目标（建议 filesDir/ai_models/ 下）
+     * @param token    HF Token（私有/gated 仓库必需，可空）
+     * @param listener 进度回调（主线程）
+     * @return 成功 true
+     */
+    suspend fun downloadAiRedrawZip(
+        context: Context,
+        repoId: String,
+        fileName: String,
+        destFile: File,
+        token: String,
+        listener: ProgressListener? = null
+    ): Boolean {
+        initContext(context)
+        val dir = destFile.parentFile ?: File(context.filesDir, "ai_models")
+        if (!dir.exists()) dir.mkdirs()
+        if (destFile.exists() && destFile.length() >= 100_000_000L) return true
+        return downloadModel(context, hfRepo = repoId, hfFile = fileName,
+            destFile = destFile, tokenOverride = token, listener = listener)
+    }
+
+    /**
+     * ★ AI 重绘 SD 模型 zip 的【直链】云下载（HF resolve / CDN / 任意托管）。
+     *   - HF resolve 直链：自动拆 repoId/fileName 走镜像循环（国内镜像更快更稳）；
+     *   - 其他直链：多线程分块原样下载 zip（不解压、不提取）。
+     *   保存文件名见 [destFile]（调用方取自 URL 末段 → modelId 即真实模型名，多模型不串目录）。
+     *
+     * @param url      完整直链（http/https）
+     * @param destFile 保存目标（建议 filesDir/ai_models/ 下；文件名取自 URL 末段）
+     * @param token    HF Token（私有/gated 仓库必需，可空）
+     * @param listener 进度回调（主线程）
+     * @return 成功 true
+     */
+    suspend fun downloadAiRedrawZipFromUrl(
+        context: Context,
+        url: String,
+        destFile: File,
+        token: String,
+        listener: ProgressListener? = null
+    ): Boolean {
+        initContext(context)
+        val dir = destFile.parentFile ?: File(context.filesDir, "ai_models")
+        if (!dir.exists()) dir.mkdirs()
+        if (destFile.exists() && destFile.length() >= 100_000_000L) return true
+
+        // ★ HF resolve 直链：拆 repoId/fileName 走镜像循环（多镜像重试，更快更稳）
+        val hfMatch = Regex("https?://[^/]+/([^/]+/[^/]+)/resolve/([^/]+)/(.+)")
+            .find(url.trim())
+        if (hfMatch != null) {
+            val repoId = hfMatch.groupValues[1]
+            val fileName = hfMatch.groupValues[3]
+            if (repoId.isNotBlank() && fileName.isNotBlank()) {
+                return downloadModel(context, hfRepo = repoId, hfFile = fileName,
+                    destFile = destFile, tokenOverride = token, listener = listener)
+            }
+        }
+        // 其他直链：zip 原样下载
+        return downloadUrlZipToFile(context, url, destFile, token, listener)
+    }
+
+    /**
+     * ★ 直链分块下载 AI 重绘 zip 到目标文件（探测+302+4线程分块+断点续传+merge）。
+     *   zip 原样保存（不做 onnx 提取——那是抠图模型用的 downloadModelFromUrl 逻辑）。
+     */
+    private suspend fun downloadUrlZipToFile(
+        context: Context,
+        url: String,
+        destFile: File,
+        token: String,
+        listener: ProgressListener? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        initContext(context)
+        val dir = destFile.parentFile ?: File(context.filesDir, "ai_models")
+        if (!dir.exists()) dir.mkdirs()
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val client = buildClient()
+
+        // 请求构建（带 HF Token，gated/私有托管可能需要）
+        fun buildReq(u: String): Request {
+            val b = Request.Builder().url(u)
+            if (token.isNotBlank()) b.header("Authorization", "Bearer $token")
+            return b.build()
+        }
+
+        try {
+            // ① 探测总大小（Range: bytes=0-0 穿透 302 拿真实长度）
+            val probeReq = buildReq(url).newBuilder().header("Range", "bytes=0-0").build()
+            var totalBytes = 0L
+            try {
+                client.newCall(probeReq).execute().use { resp ->
+                    if (resp.isSuccessful || resp.code == 206) {
+                        val cr = resp.header("Content-Range")
+                        totalBytes = cr?.substringAfter('/')?.toLongOrNull()
+                            ?: resp.body?.contentLength() ?: 0L
+                    } else {
+                        mainHandler.post { listener?.onError(IllegalStateException("HTTP ${resp.code}")) }
+                        return@withContext false
+                    }
+                }
+            } catch (e: Exception) {
+                mainHandler.post { listener?.onError(e) }
+                return@withContext false
+            }
+            if (totalBytes < 100_000_000L) {
+                mainHandler.post { listener?.onError(IllegalStateException("文件过小或无效链接（需 SD 模型 zip ≥100MB）")) }
+                return@withContext false
+            }
+
+            // ② 断点续传：已有完整 zip 则跳过
+            if (destFile.exists() && destFile.length() >= totalBytes) {
+                mainHandler.post { listener?.onDone(destFile) }
+                return@withContext true
+            }
+
+            // ③ 解析 302 真实 URL（CDN 签名，Range 才生效）
+            var realUrl = url
+            try {
+                client.newCall(buildReq(url)).execute().use { p ->
+                    if (p.code == 302 || p.code == 307 || p.code == 308)
+                        p.header("Location")?.let { realUrl = it }
+                }
+            } catch (_: Exception) {}
+
+            // ④ 分块下载到 .part
+            val partBase = destFile.name
+            val downloadedAll = downloadChunks(
+                client = client, baseUrl = realUrl, totalBytes = totalBytes,
+                dir = dir, partPrefix = partBase, token = token,
+                threads = DOWNLOAD_THREADS,
+                onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
+            )
+            if (downloadedAll < totalBytes) {
+                mainHandler.post { listener?.onError(IllegalStateException("下载不完整")) }
+                return@withContext false
+            }
+            // ⑤ 合并分块 → 最终 zip（zip 原样保存）
+            mergeChunks(dir, partBase, totalBytes, destFile)
+            for (j in 0..32) File(dir, "$partBase.part.$j").delete()
+
+            mainHandler.post { listener?.onDone(destFile) }
+            return@withContext true
+        } catch (e: Exception) {
+            mainHandler.post { listener?.onError(e) }
+            return@withContext false
+        }
+    }
+}
