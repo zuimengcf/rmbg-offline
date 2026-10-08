@@ -270,6 +270,43 @@ object HistoryManager {
         return bmp
     }
 
+    /**
+     * ★ 加载历史对应的【原图缩略图】（带内存缓存，键前缀 orig_thumb_）。
+     * 历史 Tab 分组头用它展示"同一原图"的原图缩略图（区别于结果缩略图）。
+     * 原图无 orig 存档（旧记录）时退回结果缩略图，保证始终有图可看。
+     */
+    fun loadOriginThumb(context: Context, item: HistoryItem): Bitmap? {
+        val dir = historyDir(context)
+        // 1. 原图缩略图缓存（按 orig 文件名缓存）
+        if (item.origFileName.isNotEmpty()) {
+            val cacheKey = "orig_thumb_${item.origFileName}"
+            thumbCache.get(cacheKey)?.let { return it }
+            val orig = File(dir, item.origFileName)
+            if (orig.exists()) {
+                try {
+                    // ★ 原图可能很大（几 MB~几十 MB），直接 decodeFile 会占大内存；
+                    //   先读尺寸 + inSampleSize 降采样生成小缩略图（最长边 512px 足够列表展示）
+                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(orig.absolutePath, opts)
+                    var sample = 1
+                    val maxDim = maxOf(opts.outWidth, opts.outHeight)
+                    while (maxDim / (sample * 2) >= 512) sample *= 2
+                    val bmp = BitmapFactory.decodeFile(
+                        orig.absolutePath,
+                        BitmapFactory.Options().apply {
+                            inSampleSize = sample
+                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                        }
+                    ) ?: return null
+                    thumbCache.put(cacheKey, bmp)
+                    return bmp
+                } catch (_: Exception) { /* 原图损坏/超大，退回结果缩略图 */ }
+            }
+        }
+        // 2. 无原图 → 退回结果缩略图
+        return loadThumb(context, item)
+    }
+
     /** 删除一条历史记录 */
     fun delete(context: Context, item: HistoryItem): Boolean {
         val dir = historyDir(context)

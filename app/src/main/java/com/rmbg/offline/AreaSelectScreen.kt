@@ -32,7 +32,8 @@ fun AreaSelectScreen(
     original: Bitmap,
     threshold: Float,
     currentResult: Bitmap? = null,
-    engine: com.rmbg.offline.ml.RmbgOnnxEngine? = null,
+    // ★ 修复③：改为懒加载 lambda，在按钮点击协程里后台调用，不在组合期间阻塞主线程
+    getEngine: () -> com.rmbg.offline.ml.RmbgOnnxEngine? = { null },
     onApply: (Bitmap) -> Unit = {},
     onEnterBrush: () -> Unit = {},
     onSwitchModel: () -> Unit = {},
@@ -50,8 +51,6 @@ fun AreaSelectScreen(
     var selB by remember { mutableFloatStateOf(0.8f) }
     var isRmbg by remember { mutableStateOf(false) }
     var isRedraw by remember { mutableStateOf(false) }
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
 
     Scaffold(
         containerColor = Color(0xFF101418),
@@ -61,7 +60,7 @@ fun AreaSelectScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = Color.White) } },
                 actions = {
                     TextButton(onClick = onSwitchModel) { Text("切模型", color = Color(0xFFFFB300)) }
-                    TextButton(onClick = onEnterBrush) { Text("后处理/画笔", color = Color(0xFF64B5F6)) }
+                    TextButton(onClick = onEnterBrush) { Text("编辑", color = Color(0xFF64B5F6)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF101418))
             )
@@ -73,14 +72,22 @@ fun AreaSelectScreen(
             ) {
                 Button(
                     onClick = {
-                        val eng = engine ?: run { Toast.makeText(context, "模型未加载", Toast.LENGTH_SHORT).show(); return@Button }
-                        val bw = original.width; val bh = original.height
-                        val L = (selL * bw).toInt().coerceIn(0, bw - 1)
-                        val T = (selT * bh).toInt().coerceIn(0, bh - 1)
-                        val R = (selR * bw).toInt().coerceIn(L + 1, bw)
-                        val B = (selB * bh).toInt().coerceIn(T + 1, bh)
                         scope.launch {
                             isRmbg = true
+                            // ★ 修复③：在协程/IO线程懒加载引擎（不在主线程阻塞），避免组合期间 getEngine() 异常被吞 → null → "模型未加载"
+                            val eng = withContext(Dispatchers.IO) {
+                                try { getEngine() } catch (_: Exception) { null }
+                            }
+                            if (eng == null) {
+                                isRmbg = false
+                                Toast.makeText(context, "模型未加载，请先在主界面确保模型就绪", Toast.LENGTH_SHORT).show()
+                                return@launch
+                            }
+                            val bw = original.width; val bh = original.height
+                            val L = (selL * bw).toInt().coerceIn(0, bw - 1)
+                            val T = (selT * bh).toInt().coerceIn(0, bh - 1)
+                            val R = (selR * bw).toInt().coerceIn(L + 1, bw)
+                            val B = (selB * bh).toInt().coerceIn(T + 1, bh)
                             // ★ 修复：用当前已抠的 display 作为 currentResult，而不是外部初始传入的 currentResult。
                             //   这样选区外保留之前已抠的结果（左上角扣好了切到右上角再扣，左上角依然保留透明）。
                             //   旧版传固定 currentResult（editorOnOriginal=true 时为 null）→ 每次选区外回原图 → 之前抠的丢失。
@@ -96,7 +103,8 @@ fun AreaSelectScreen(
                             } else Toast.makeText(context, "局部重抠失败", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    enabled = !isRmbg && engine != null,
+                    // ★ 始终可点：engine 为空时点击提示（不再静默禁用，避免看起来"只有区域重绘"）
+                    enabled = !isRmbg,
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Icon(Icons.Filled.Crop, contentDescription = null); Spacer(Modifier.width(8.dp))
@@ -154,29 +162,51 @@ fun AreaSelectScreen(
                     .fillMaxSize()
                     .pointerInput(Unit) {
                         awaitPointerEventScope {
-                            var twoFinger = false
                             while (true) {
                                 val evt = awaitPointerEvent()
-                                val pts = evt.changes
                                 val cw = size.width.toFloat()
                                 val ch = size.height.toFloat()
-                                if (pts.size >= 2) {
-                                    twoFinger = true
-                                    val p0 = pts[0]; val p1 = pts[1]
+                                // ★ 修复：用"当前实际按下的指针数"动态判定，绝不靠手工置位/复位 twoFinger。
+                                //   旧版靠 twoFinger 布尔：双指抬起一根后仍为 true → 单指 Move 触发
+                                //   `return@awaitPointerEventScope` 退出整个事件循环 → 之后所有触摸永久失效(卡死)。
+                                //   pressedCount 每次事件重算：抬起一根自动回落，永不卡死。
+                                val active = evt.changes.filter { it.pressed }
+                                if (active.size >= 2) {
+                                    // ---- 双指：以两指中点为锚点缩放 + 中点平移 ----
+                                    val p0 = active[0]; val p1 = active[active.size - 1]
                                     val dist = sqrt((p1.position.x - p0.position.x).let { it * it } +
                                         (p1.position.y - p0.position.y).let { it * it })
                                     if (evt.type == PointerEventType.Move) {
                                         val prevDist = sqrt(
                                             (p1.previousPosition.x - p0.previousPosition.x).let { it * it } +
                                             (p1.previousPosition.y - p0.previousPosition.y).let { it * it })
-                                        if (prevDist > 0) scale = (scale * dist / prevDist).coerceIn(0.5f, 8f)
+                                        if (prevDist > 0) {
+                                            val newScale = (scale * dist / prevDist).coerceIn(0.5f, 8f)
+                                            val dw = display.width.toFloat(); val dh = display.height.toFloat()
+                                            val fs = min(cw / dw, ch / dh)
+                                            val fw = dw * fs; val fh = dh * fs
+                                            val imgCx = (cw - fw * scale) / 2f + offset.x + fw * scale / 2f
+                                            val imgCy = (ch - fh * scale) / 2f + offset.y + fh * scale / 2f
+                                            val pinchCx = (p0.position.x + p1.position.x) / 2f
+                                            val pinchCy = (p0.position.y + p1.position.y) / 2f
+                                            val ratio = newScale / scale
+                                            val dx = pinchCx - imgCx
+                                            val dy = pinchCy - imgCy
+                                            offset = Offset(
+                                                offset.x + dx * (1f - ratio),
+                                                offset.y + dy * (1f - ratio)
+                                            )
+                                            scale = newScale
+                                        }
+                                        // 双指平移：两指中点位移
                                         offset += Offset(
                                             ((p0.position.x - p0.previousPosition.x) + (p1.position.x - p1.previousPosition.x)) / 2,
                                             ((p0.position.y - p0.previousPosition.y) + (p1.position.y - p1.previousPosition.y)) / 2)
                                     }
-                                    pts.forEach { it.consume() }
-                                } else if (pts.size == 1) {
-                                    val p = pts[0]
+                                    evt.changes.forEach { it.consume() }
+                                } else if (active.size == 1) {
+                                    // ---- 单指：框选 / 拖动选区 / 拉右下角 ----
+                                    val p = active[0]
                                     val dw = display.width.toFloat(); val dh = display.height.toFloat()
                                     val fs = min(cw / dw, ch / dh)
                                     val fw = dw * fs; val fh = dh * fs
@@ -186,7 +216,6 @@ fun AreaSelectScreen(
                                     val v = ((p.position.y - iT) / (fh * scale)).coerceIn(0f, 1f)
                                     when (evt.type) {
                                         PointerEventType.Press -> {
-                                            twoFinger = false
                                             val r = with(density) { 26.dp.toPx() }
                                             val hx = iL + selR * fw * scale
                                             val hy = iT + selB * fh * scale
@@ -202,11 +231,12 @@ fun AreaSelectScreen(
                                             dragPrevU = u; dragPrevV = v
                                         }
                                         PointerEventType.Move -> {
-                                            if (twoFinger) return@awaitPointerEventScope
-                                            when (dragMode) {
-                                                1 -> { val du = u - dragPrevU; val dv = v - dragPrevV; selL = (selL + du).coerceIn(0f, 1f); selR = (selR + du).coerceIn(0f, 1f); selT = (selT + dv).coerceIn(0f, 1f); selB = (selB + dv).coerceIn(0f, 1f) }
-                                                2 -> { selR = u.coerceIn(selL + 0.02f, 1f); selB = v.coerceIn(selT + 0.02f, 1f) }
-                                                3 -> { selR = u.coerceIn(selL + 0.02f, 1f); selB = v.coerceIn(selT + 0.02f, 1f) }
+                                            if (dragMode != 0) {
+                                                when (dragMode) {
+                                                    1 -> { val du = u - dragPrevU; val dv = v - dragPrevV; selL = (selL + du).coerceIn(0f, 1f); selR = (selR + du).coerceIn(0f, 1f); selT = (selT + dv).coerceIn(0f, 1f); selB = (selB + dv).coerceIn(0f, 1f) }
+                                                    2 -> { selR = u.coerceIn(selL + 0.02f, 1f); selB = v.coerceIn(selT + 0.02f, 1f) }
+                                                    3 -> { selR = u.coerceIn(selL + 0.02f, 1f); selB = v.coerceIn(selT + 0.02f, 1f) }
+                                                }
                                             }
                                             dragPrevU = u; dragPrevV = v
                                         }
@@ -214,6 +244,9 @@ fun AreaSelectScreen(
                                         else -> {}
                                     }
                                     if (dragMode != 0) p.consume()
+                                } else {
+                                    // 所有手指都抬起：清除拖动状态，准备下一次
+                                    dragMode = 0
                                 }
                             }
                         }

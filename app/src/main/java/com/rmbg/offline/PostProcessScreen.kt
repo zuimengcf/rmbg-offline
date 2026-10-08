@@ -5,6 +5,8 @@ import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -33,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.min
 import kotlin.math.roundToInt
+import com.rmbg.offline.ml.SuperResEngine
 
 /**
  * 独立的后处理/画笔编辑页面（从查看器拆出的"编辑功能新窗口"）。
@@ -64,7 +67,15 @@ fun PostProcessScreen(
     //    → "手动恢复和抠图都失效"。凡不可变或 HARDWARE 一律复制成可变软副本。
     var displayBitmap by remember {
         mutableStateOf(
-            if (result.isMutable && result.config != android.graphics.Bitmap.Config.HARDWARE)
+            // ★ 基底优先用 originPx（查看器缓存的未硬化 soft 像素，保留 1..254 半透明边缘 alpha）：
+            //   后处理"去色边/条件收缩"的算法目标是半透明边缘，若直接拿硬化后的 result
+            //   （alpha 只有 0/255）当基底，滑块拉满也找不到可处理的像素 → "没效果"。
+            //   尺寸必须与 result 一致才可用。
+            if (originPx != null && originPx.size == result.width * result.height && result.width > 0 && result.height > 0)
+                Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888).also {
+                    it.setPixels(originPx, 0, result.width, 0, 0, result.width, result.height)
+                }
+            else if (result.isMutable && result.config != android.graphics.Bitmap.Config.HARDWARE)
                 result
             else result.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
         )
@@ -80,11 +91,119 @@ fun PostProcessScreen(
 
     // 背景强度
     var bgStrength by remember { mutableStateOf(0) }
-    // 后处理参数
-    var decontaminate by remember { mutableStateOf(0f) }
-    var feather by remember { mutableStateOf(0) }
-    var shrink by remember { mutableStateOf(0) }
-    var harden by remember { mutableStateOf(false) }
+    // ★ 4x 超分（独立按钮：点击立即超分并替换显示，不随"应用"自动执行；v4 实测链路）
+    var superResBusy by remember { mutableStateOf(false) }
+    var superResFail by remember { mutableStateOf("") }   // ★ 超分失败具体原因（透传给 Toast）
+    // ★ 超分模型来源显示：当前是否用导入模型（true=导入模型，false=内置 assets）
+    var superResImported by remember { mutableStateOf(com.rmbg.offline.Prefs.superResModelPath.isNotEmpty() && java.io.File(com.rmbg.offline.Prefs.superResModelPath).exists()) }
+    // ★ 导入超分模型（SAF 选 .zip 或 .onnx：QNN 用 onnx+bin zip，CPU 可单 .onnx）
+    val importSuperResLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val displayName = try {
+                        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                            ?: "super_res_model"
+                    } catch (_: Exception) { "super_res_model" }
+                    val tmp = java.io.File(context.cacheDir, "sr_import_${System.currentTimeMillis()}.${if (displayName.endsWith(".zip", true)) "zip" else "onnx"}")
+                    context.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { out -> input.copyTo(out) } }
+                    if (!tmp.exists() || tmp.length() == 0L) { tmp.delete(); null } else {
+                        // ★ zip（QNN EPContext onnx+bin / 普通 ONNX）→ 走超分专用导入（隔离目录，不混入抠图模型）
+                        if (displayName.endsWith(".zip", true)) {
+                            val path = com.rmbg.offline.ml.ModelManager.importSuperResModelZip(tmp)
+                            tmp.delete()
+                            path
+                        } else {
+                            // ★ 单个 .onnx（CPU 普通模型）：复制到 modelDir/superres/superres_model.onnx
+                            val srDir = java.io.File(com.rmbg.offline.ml.ModelManager.modelDir(), "superres").apply { mkdirs() }
+                            val dest = java.io.File(srDir, "superres_model.onnx")
+                            tmp.copyTo(dest, overwrite = true)
+                            tmp.delete()
+                            if (dest.exists()) dest.absolutePath else null
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-SUPER", "导入超分模型失败", e)
+                    null
+                }
+            }
+            if (result != null && java.io.File(result).exists()) {
+                com.rmbg.offline.Prefs.superResModelPath = result
+                superResImported = true
+                Toast.makeText(context, "超分模型已导入，4x 超分将使用它", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "超分模型导入失败：请选择包含 onnx(+bin) 的 zip 或单个 onnx", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    // ★ 后处理参数（默认值 = 脚本 sr_then_post_v2 验证的最优配置 "轻:hard<25>+shrink2"：
+    //   dc=0.6 去色边、shrink=2 条件收缩、hardenTh=25 背景硬化（0=关闭），发丝砍杀率 0%）
+    var decontaminate by remember { mutableStateOf(0.6f) }
+    var shrink by remember { mutableStateOf(2) }
+    var hardenTh by remember { mutableIntStateOf(25) }   // 背景硬化阈值 0=关，默认25（脚本最优）
+    // ★ 后处理滑块区折叠开关（默认折叠：让图像/画笔占大部分屏幕，需要时再展开调参）
+    var showPostControls by remember { mutableStateOf(false) }
+
+    // ★★ 后处理实时预览：滑块/开关拖动时立即用脚本验证的 postLight 应用到显示图，
+    //    不用等点"应用"。basePixels = 打开时的原始 soft 像素（未硬化，半透明边缘齐全），
+    // ★★ 后处理实时预览基底：打开时的原始 soft 像素（未硬化，半透明边缘齐全）。
+    //   每次从基底重算，保证反复拖动不叠加误差。
+    //   ★ 初始捕获一次（remember 无 key）；超分成功后同步更新为新大图像素，避免拖动滑块退回小图。
+    var basePixels by remember {
+        mutableStateOf(
+            run {
+                val d = displayBitmap
+                if (d.isRecycled) null else {
+                    val px = IntArray(d.width * d.height)
+                    d.getPixels(px, 0, d.width, 0, 0, d.width, d.height)
+                    px
+                }
+            }
+        )
+    }
+    // 实时预览协程：参数变化触发（去抖，避免每像素滑动都全量重算）
+    LaunchedEffect(bgStrength, decontaminate, shrink, hardenTh) {
+        val bp = basePixels ?: return@LaunchedEffect
+        val d = displayBitmap
+        if (d.isRecycled) return@LaunchedEffect
+        // ★ 硬化阈值：hardenTh 滑块>0 用其阈值；否则用背景强度滑杆阈值；两者都 0 → 不硬化
+        val th = when {
+            hardenTh > 0 -> hardenTh
+            bgStrength > 0 -> bgStrength
+            else -> 0
+        }
+        // 没有启用的处理项 → 回到原始基底（滑块全归零时恢复）
+        val enabled = decontaminate > 0f || shrink > 0 || th > 0
+        val updated = withContext(Dispatchers.IO) {
+            try {
+                if (!enabled) {
+                    // 还原到基底（未硬化，保持半透明边缘）
+                    Bitmap.createBitmap(d.width, d.height, Bitmap.Config.ARGB_8888).also { it.setPixels(bp, 0, d.width, 0, 0, d.width, d.height) }
+                } else {
+                    // 从基底重建一张，再跑脚本 postLight（绝不叠加在已处理图上）
+                    val base = Bitmap.createBitmap(d.width, d.height, Bitmap.Config.ARGB_8888).also { it.setPixels(bp, 0, d.width, 0, 0, d.width, d.height) }
+                    PostProcessEngine.postLight(
+                        base,
+                        shrink = shrink.coerceAtLeast(0),
+                        hardenTh = th,
+                        dc = decontaminate,
+                        bgColor = PostProcessEngine.AUTO_BG
+                    )
+                }
+            } catch (_: Exception) { null }
+        }
+        if (updated != null && !updated.isRecycled) {
+            val old = displayBitmap
+            if (old !== updated && old.isRecycled.not()) { try { old.recycle() } catch (_: Exception) {} }
+            displayBitmap = updated
+            brushVersion++
+        }
+    }
+
     // 画笔
     var brushMode by remember { mutableStateOf(initialBrushMode) }
     var isEraser by remember { mutableStateOf(true) }
@@ -137,7 +256,7 @@ fun PostProcessScreen(
         containerColor = Color(0xFF101418),
         topBar = {
             TopAppBar(
-                title = { Text("后处理 / 画笔", color = Color.White, fontSize = 17.sp) },
+                title = { Text("编辑", color = Color.White, fontSize = 17.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
@@ -150,60 +269,25 @@ fun PostProcessScreen(
                             if (cur.isRecycled) return@TextButton
                             val sBg = bgStrength
                             val sDc = decontaminate
-                            val sFe = feather
                             val sSh = shrink
-                            val sHd = harden
-                            val hasEdits = sBg > 0 || sDc > 0f || sFe > 0 || sSh != 0 || sHd || strokeCount > 0
+                            val sHd = hardenTh
+                            val hasEdits = sBg > 0 || sDc > 0f || sSh != 0 || sHd > 0 || strokeCount > 0
                             if (!hasEdits) {
                                 Toast.makeText(context, "未做任何调整", Toast.LENGTH_SHORT).show()
                                 return@TextButton
                             }
                             val w = cur.width; val h = cur.height
-                            val wBg = (Prefs.viewerBgColor.let { bgName ->
-                                when (bgName) {
-                                    "白色" -> -1
-                                    "黑色" -> 0xFF000000.toInt()
-                                    "浅灰" -> 0xFFBDBDBD.toInt()
-                                    "绿色" -> 0xFF4CAF50.toInt()
-                                    else -> -1
-                                }
-                            })
                             scope.launch {
-                                val final = withContext(Dispatchers.IO) {
-                                    // 1) 背景强度：把 alpha 低于阈值的半透明残影硬化为全透明
-                                    var b = cur
-                                    if (sBg > 0) {
-                                        val nb = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                                        val row = IntArray(w)
-                                        val dst = IntArray(w)
-                                        for (y in 0 until h) {
-                                            val base = y * w
-                                            cur.getPixels(row, 0, w, 0, y, w, 1)
-                                            for (x in 0 until w) {
-                                                val p = row[x]
-                                                dst[x] = if (((p ushr 24) and 0xFF) < sBg) 0x00000000 else p
-                                            }
-                                            nb.setPixels(dst, 0, w, 0, y, w, 1)
-                                        }
-                                        b = nb
-                                    }
-                                    // 2) 边缘后处理：调引擎 postProcess（去色边/柔化/收缩/背景硬化）
-                                    if (sDc > 0f || sFe > 0 || sSh != 0 || sHd) {
-                                        try {
-                                            RmbgScreenState.engine?.postProcess(
-                                                b, sDc, sFe, sSh, wBg, harden = sHd
-                                            )?.let { b = it }
-                                        } catch (_: Exception) {}
-                                    }
-                                    b
-                                }
-                                displayBitmap = final
-                                bgStrength = 0; decontaminate = 0f; feather = 0; shrink = 0; harden = false
+                                // ★ 应用直接用当前显示图（实时预览已把 postLight 结果写入 displayBitmap）：
+                                //   滑块拖动时 LaunchedEffect 已实时应用脚本 postLight，这里直接提交最终显示图，
+                                //   不再重复跑 postLight（避免在同一图上二次叠加处理）。
+                                val final = cur
+                                bgStrength = 0; decontaminate = 0f; shrink = 0; hardenTh = 0
                                 Toast.makeText(context, "已应用", Toast.LENGTH_SHORT).show()
                                 onApply(final)
                             }
                         },
-                        enabled = bgStrength > 0 || decontaminate > 0f || feather > 0 || shrink != 0 || harden || strokeCount > 0
+                        enabled = !superResBusy && (bgStrength > 0 || decontaminate > 0f || shrink != 0 || hardenTh > 0 || strokeCount > 0)
                     ) { Text("应用", color = Color(0xFF64B5F6)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF101418))
@@ -269,6 +353,101 @@ fun PostProcessScreen(
                 if (!brushMode) {
                     // ---- 后处理模式：背景强度 + 去色边/柔化/收缩/硬化 ----
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        // ★ 4x 超分独立按钮：点击立即超分当前图并替换显示（不入历史，可保存/分享）
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    val c = displayBitmap
+                                    if (c.isRecycled || superResBusy) return@OutlinedButton
+                                    // 防无限超分：已是超分产物或 ≥2048 直接拒绝
+                                    if (c.width >= 2048 || c.height >= 2048) {
+                                        Toast.makeText(context, "当前图已是最佳分辨率（2048），不再叠加超分", Toast.LENGTH_SHORT).show()
+                                        return@OutlinedButton
+                                    }
+                                    scope.launch {
+                                        superResBusy = true
+                                        val up = withContext(Dispatchers.IO) {
+                                            try {
+                                                val imported = com.rmbg.offline.Prefs.superResModelPath
+                                                if (imported.isNotEmpty() && java.io.File(imported).exists()) {
+                                                    // ★ 优先用导入的超分模型（QNN EPContext 或普通 ONNX，自动检测）
+                                                    val eng = com.rmbg.offline.ml.SuperResEngine.loadFromFile(context, java.io.File(imported), threads = 4)
+                                                    try { eng.upscale4x(c) } finally { eng.close() }
+                                                } else {
+                                                    val model = SuperResEngine.loadFromAssets(context, "models/realesrgan_anime6b.onnx")
+                                                    if (model == null) null else {
+                                                        val eng = SuperResEngine(threads = 4, modelBytes = model)
+                                                        try { eng.upscale4x(c) } finally { eng.close() }
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                // ★ 记录具体失败原因（真机排查超分失败用）
+                                                android.util.Log.e("RMBG-SUPER", "后处理页超分失败", e)
+                                                // ★ 把具体错误透传给 Toast，便于真机定位
+                                                val err = e.message?.take(80) ?: e.javaClass.simpleName
+                                                superResFail = "超分失败：$err"
+                                                null
+                                            }
+                                        }
+                                        superResBusy = false
+                                        if (up != null && !up.isRecycled && up.width > 0) {
+                                            val old = displayBitmap
+                                            if (old !== c && old !== up && old.isRecycled.not()) { try { old.recycle() } catch (_: Exception) {} }
+                                            displayBitmap = up
+                                            // ★ 同步刷新基底像素：超分后基底=新大图，拖动滑块仍基于超分结果，不会退回小图
+                                            val upPx = IntArray(up.width * up.height)
+                                            up.getPixels(upPx, 0, up.width, 0, 0, up.width, up.height)
+                                            basePixels = upPx
+                                            scale = 1f; offset = Offset.Zero
+                                            Toast.makeText(context, "已 4x 超分：${up.width}×${up.height}", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, if (superResFail.isNotEmpty()) superResFail else "超分失败（模型不可用或内存不足）", Toast.LENGTH_LONG).show()
+                                            superResFail = ""
+                                        }
+                                    }
+                                },
+                                enabled = !superResBusy && displayBitmap.isRecycled.not() &&
+                                    displayBitmap.width < 2048 && displayBitmap.height < 2048,
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8F00))
+                            ) {
+                                Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFFFF8F00))
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (superResBusy) "超分中…" else "4x 超分", fontSize = 12.sp, color = Color(0xFFFF8F00))
+                            }
+                            // ★ 导入超分模型入口 + 当前来源（★ 独立于抠图模型导入：超分模型存 superres/ 目录，绝不混入抠图列表）
+                            TextButton(
+                                onClick = { importSuperResLauncher.launch("*/*") },
+                                enabled = !superResBusy,
+                                modifier = Modifier.height(30.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF90A4AE))
+                                Spacer(Modifier.width(3.dp))
+                                Text(if (superResImported) "已导入超分模型" else "导入超分模型", fontSize = 11.sp, color = Color(0xFF90A4AE))
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("(AI 放大 4 倍)", color = Color(0xFF90A4AE), fontSize = 10.sp)
+                                if (superResImported) {
+                                    Text("导入: ${java.io.File(com.rmbg.offline.Prefs.superResModelPath).name}", color = Color(0xFF4FC3F7), fontSize = 9.sp, maxLines = 1)
+                                }
+                            }
+                        }
+                        // ★ 滑块区折叠开关：默认折叠，点开展开 背景强度/去色边/收缩/硬化
+                        TextButton(
+                            onClick = { showPostControls = !showPostControls },
+                            modifier = Modifier.fillMaxWidth().height(30.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Icon(
+                                if (showPostControls) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                                contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF90A4AE)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (showPostControls) "收起参数" else "参数调整", fontSize = 12.sp, color = Color(0xFF90A4AE))
+                        }
+                        if (showPostControls) {
                         // 背景强度
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("背景强度", color = Color.White, fontSize = 12.sp)
@@ -280,6 +459,8 @@ fun PostProcessScreen(
                             )
                             Text("$bgStrength", color = Color.White, fontSize = 12.sp)
                         }
+                        Text("把 alpha 低于此值的半透明背景雾清除为全透明（值越高，背景越干净，也会削掉更细的发丝）", color = Color(0xFF90A4AE), fontSize = 10.sp)
+                        Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("去色边", color = Color.White, fontSize = 12.sp)
                             Slider(
@@ -290,33 +471,31 @@ fun PostProcessScreen(
                             )
                             Text("${(decontaminate * 100).roundToInt()}%", color = Color.White, fontSize = 12.sp)
                         }
+                        Text("还原半透明边缘被污染的底色（去白边/黑边/彩边）；值越高还原越彻底，低强度更保险", color = Color(0xFF90A4AE), fontSize = 10.sp)
+                        Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("柔化", color = Color.White, fontSize = 12.sp)
-                            Slider(
-                                value = feather.toFloat(),
-                                onValueChange = { feather = it.roundToInt() },
-                                valueRange = 0f..8f,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text("${feather}px", color = Color.White, fontSize = 12.sp)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("收缩", color = Color.White, fontSize = 12.sp)
+                            Text("去毛边(收缩)", color = Color(0xFFFFB74D), fontSize = 12.sp)
                             Slider(
                                 value = shrink.toFloat(),
                                 onValueChange = { shrink = it.roundToInt() },
-                                valueRange = -20f..20f,
+                                valueRange = 0f..20f,
                                 modifier = Modifier.weight(1f)
                             )
-                            Text("${shrink}px", color = Color.White, fontSize = 12.sp)
+                            Text("${shrink}px", color = Color(0xFFFFB74D), fontSize = 12.sp)
                         }
+                        Text("沿边缘向内收缩，收掉突出的毛刺/锯齿；仅贴背景处收缩，主体内部不动，值越大收得越狠", color = Color(0xFF90A4AE), fontSize = 10.sp)
+                        Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("背景硬化", color = Color.White, fontSize = 12.sp)
-                            FilterChip(
-                                selected = harden,
-                                onClick = { harden = !harden },
-                                label = { Text(if (harden) "开" else "关", fontSize = 12.sp) }
+                            Slider(
+                                value = hardenTh.toFloat(),
+                                onValueChange = { hardenTh = it.roundToInt().coerceIn(0, 255) },
+                                valueRange = 0f..255f,
+                                modifier = Modifier.weight(1f)
                             )
+                            Text(if (hardenTh > 0) "$hardenTh" else "关", color = Color.White, fontSize = 12.sp)
+                        }
+                        Text("把 alpha 低于此值的半透明残留雾影设为全透明（0=关闭；值越高背景越干净，过高会削细发丝）", color = Color(0xFF90A4AE), fontSize = 10.sp)
                         }
                     }
                 } else {
@@ -352,14 +531,19 @@ fun PostProcessScreen(
                     )
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = {
-                        // 还原：回到打开时原始像素
-                        val ob = originBmp ?: return@TextButton
+                        // ★ 还原：回到打开编辑页时的原始像素（基底 basePixels，恒定尺寸），并复位滑块/画笔/缩放
+                        val bp = basePixels
+                        if (bp == null) return@TextButton
                         val w = displayBitmap.width; val h = displayBitmap.height
-                        val restore = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                        android.graphics.Canvas(restore).drawBitmap(ob, 0f, 0f, null)
+                        val restore = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                            it.setPixels(bp, 0, w, 0, 0, w, h)
+                        }
+                        val old = displayBitmap
+                        if (old !== restore && old.isRecycled.not()) { try { old.recycle() } catch (_: Exception) {} }
                         displayBitmap = restore
-                        bgStrength = 0; decontaminate = 0f; feather = 0; shrink = 0; harden = false; strokeCount = 0
+                        bgStrength = 0; decontaminate = 0f; shrink = 0; hardenTh = 0; strokeCount = 0
                         undoStack.clear()
+                        scale = 1f; offset = Offset.Zero
                     }) { Text("还原", fontSize = 12.sp) }
                 }
             }

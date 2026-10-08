@@ -33,9 +33,15 @@ object AiRedrawEngine {
     private const val API_URL = "http://127.0.0.1:$PORT"
 
     // 模型 zip 内要解压的关键文件（LocalDream 平铺到 modelDir 根）
+    // ★ 两种 VAE/CLIP 格式并存：
+    //   - .bin        ：QNN/MNN 单文件（AnythingV5 等老包）
+    //   - .mnn+.weight：MNN 分离权重（HentaiGapeMix V10 等新包：vae_decoder.mnn + vae_decoder.mnn.weight）
     private val REQUIRED_MODEL_FILES = listOf(
-        "unet.bin", "vae_decoder.bin", "vae_encoder.bin",
-        "clip_v2.mnn", "tokenizer.json", "pos_emb.bin", "token_emb.bin"
+        "unet.bin",
+        "vae_decoder.bin", "vae_decoder.mnn", "vae_decoder.mnn.weight",
+        "vae_encoder.bin", "vae_encoder.mnn", "vae_encoder.mnn.weight",
+        "clip_v2.mnn", "clip_v2.mnn.weight",
+        "tokenizer.json", "pos_emb.bin", "token_emb.bin"
     )
 
     @Volatile
@@ -285,8 +291,11 @@ object AiRedrawEngine {
     /** 识别 SD1.5 模型包并校验关键文件（恒 sd15npu，兼容不同底模包命名） */
     fun detectModelPack(zipFile: File): ModelPackInfo {
         val names = scanZipEntries(zipFile).toSet()
-        // 必需：unet.bin + vae_decoder.bin（所有 SD1.5 QNN 包都有）
-        val must = mutableListOf("unet.bin", "vae_decoder.bin")
+        // 必需：unet.bin（所有 SD1.5 QNN 包都有）
+        val must = mutableListOf("unet.bin")
+        // VAE：vae_decoder.bin（QNN 单文件）或 vae_decoder.mnn + vae_decoder.mnn.weight（MNN 分离权重）任一存在即可
+        val hasDecoderBin = names.any { it == "vae_decoder.bin" || it == "vae_decoder.mnn" || it == "vae_decoder.mnn.weight" }
+        if (!hasDecoderBin) must.add("vae_decoder.bin") // 标记缺失（兼容旧包名）
         // CLIP：clip_v2.mnn / clip.mnn 至少一个
         val hasClip = names.any { it == "clip_v2.mnn" || it == "clip.mnn" }
         if (!hasClip) {
@@ -427,31 +436,35 @@ object AiRedrawEngine {
         }
     }
 
-    /** 部署 QNN 运行时（assets/qnnlibs → filesDir/qnnlibs） */
+    /** 部署 QNN 运行时（nativeLibraryDir → filesDir/qnnlibs）
+     *  ★ 合并两套 QNN so：QNN 库（libQnnHtp/libQnnSystem/V68~V81 Skel/Stub）已由 qnn-runtime AAR
+     *    打包进 nativeLibraryDir（抠图进程加载同一份），此处不再从 assets 二次打包，直接复制
+     *    nativeLibraryDir 已有的库到 filesDir/qnnlibs 供 AI 重绘引擎进程 LD_LIBRARY_PATH 使用，
+     *    APK 约省 100MB。 */
     suspend fun deployRuntime(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
             val dir = runtimeDir(context)
             if (!dir.exists()) dir.mkdirs()
-            val assetNames = try { context.assets.list("qnnlibs") ?: emptyArray() } catch (_: Exception) { emptyArray() }
-            if (assetNames.isEmpty()) {
-                status = "assets/qnnlibs 为空（APK 未打包 QNN 运行时）"
+            val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+            // 引擎需要的 QNN 库：nativeLibraryDir 下所有 libQnn*.so（Htp + System + V68~V81 Skel/Stub 全套）
+            val srcSo = nativeDir.listFiles { f -> f.isFile && f.name.endsWith(".so") && f.name.startsWith("libQnn") }
+                ?: emptyArray()
+            if (srcSo.isEmpty()) {
+                status = "nativeLibraryDir 无 QNN 运行时库（未打包 qnn-runtime AAR）"
                 return@withContext false
             }
             var ok = 0
-            for (name in assetNames) {
-                if (!name.endsWith(".so")) continue
-                val target = File(dir, name)
-                val assetSize = context.assets.open("qnnlibs/$name").use { it.available().toLong() }
-                if (!target.exists() || target.length() != assetSize) {
-                    context.assets.open("qnnlibs/$name").use { input ->
-                        FileOutputStream(target).use { output -> input.copyTo(output) }
-                    }
+            for (src in srcSo) {
+                val target = File(dir, src.name)
+                val srcSize = src.length()
+                if (!target.exists() || target.length() != srcSize) {
+                    src.copyTo(target, overwrite = true)
                 }
                 target.setReadable(true, true)
                 target.setExecutable(true, true)
                 ok++
             }
-            status = "QNN 运行时已部署: $ok 个库"
+            status = "QNN 运行时已部署: $ok 个库（来自 nativeLibraryDir）"
             true
         } catch (e: Exception) {
             status = "QNN 运行时部署失败: ${e.message}"
