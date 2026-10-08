@@ -25,8 +25,8 @@ android {
         applicationId = "com.rmbg.offline"
         minSdk = 27
         targetSdk = 35
-        versionCode = 41
-        versionName = "1.1.1"
+        versionCode = 42
+        versionName = "1.1.2"
 
         // ★ 是否为 Lite 精简版（包名 com.rmbg.offline.lite，模型不内置、走 HF 云下载）
         buildConfigField("boolean", "IS_LITE", "false")
@@ -43,15 +43,15 @@ android {
         create("normal") {
             dimension = "edition"
             applicationId = "com.rmbg.offline"
-            versionCode = 41
-            versionName = "1.1.1"
+            versionCode = 42
+            versionName = "1.1.2"
             buildConfigField("boolean", "IS_LITE", "false")
         }
         create("lite") {
             dimension = "edition"
             applicationId = "com.rmbg.offline.lite"
-            versionCode = 41
-            versionName = "1.1.1"
+            versionCode = 42
+            versionName = "1.1.2"
             buildConfigField("boolean", "IS_LITE", "true")
         }
     }
@@ -71,6 +71,9 @@ android {
     buildTypes {
         debug {
             isDebuggable = true
+            // ★ 测试版代码 + 正式签名：debuggable=true 可 run-as 诊断内部占用，
+            //   签名用正式 keystore → 可与正式版互相覆盖安装（不用先卸载）
+            signingConfig = signingConfigs.getByName("release")
         }
         release {
             isMinifyEnabled = false
@@ -104,8 +107,17 @@ android {
         }
         // ★ QNN HTP 加载器必须从 ApplicationInfo.nativeLibraryDir 按路径发现
         //   backend/stub/skel 库 → 必须用 legacy JNI 打包（不压缩 native 库）
+        // ★ 多设备兼容：保留 qnn-runtime AAR 的 QNN 库（V68~V81 skel/stub + GPU/DSP），
+        //   不同骁龙 SoC 各需对应版本（SM8350=V68 / SM8450=V69 / SM8550=V73 / SM8650=V75 / SM8750=V79 / SM8850=V81）
+        // ★ 排除 libQnnHtpPrepare.so（85MB）：
+        //   - 仅用于"在线编译"（把 ONNX 图实时编译成 HTP 二进制），走 hexagon_nn 工具链
+        //   - 本 App 全部 QNN 模型都是离线 EPContext（.bin），推理走 QnnContext_createFromBinary，
+        //     不需要 Prepare；缺失时 ORT QNN EP 会 fallback 到 HNRD user-driver 路径（已有降级日志）
+        //   - 排除后 APK 直接减 85MB（105MB → ~20MB），安装占用同步减少
         jniLibs {
             useLegacyPackaging = true
+            // ★ 去掉 85MB 的 HtpPrepare（离线 EPContext 不需要在线编译工具链）
+            excludes += "**/libQnnHtpPrepare.so"
         }
     }
 }
@@ -130,8 +142,10 @@ dependencies {
     //   3. QNN 运行时（GPU/HTP/System/DSP + v68-v81 stub/skel 全套 19 个库）
     //   ⚠ 三者必须显式声明：插件 AAR 的 POM 不会传递引入 ORT 核心或 QNN 运行时
     implementation("com.qualcomm.qti:onnxruntime-android-qnn:2.5.0")
-    // ★★ qnn-runtime 用 2.50.0：EPContext bin 是 QNN SDK 2.50.0.260828221209 编译的
-    //   （见 qnn_rmbg14_sm8550.onnx 的 ep_sdk_version 属性），runtime 必须同版本才能加载 context binary
+    // ★★ QNN 运行时库：全面拥抱 2.50（qnn-runtime AAR 2.50.0 自带全套 V68~V81 + Htp + System）。
+    //   ★ 匹配性：模型 bin 用 QNN SDK 2.50.0.260828221209 编译（HentaiGapeMix V10 等新包），
+    //     runtime 必须 2.50 才能加载 EPContext（2.39 会报 ORT_NOT_IMPLEMENTED）。
+    //   不再用 flavor 源集直装 2.39 .so；qnn-runtime AAR 直接进 nativeLibraryDir。
     implementation("com.qualcomm.qti:qnn-runtime:2.50.0")
 
     // 协程

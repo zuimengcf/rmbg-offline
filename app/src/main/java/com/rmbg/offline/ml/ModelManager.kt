@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -53,6 +54,7 @@ object ModelManager {
         val assetOnnx: String? = null,      // assets 内 onnx 路径（ep_cache_context 引用 bin 名）
         val assetBin: String? = null,       // assets 内 bin 路径
         val hfBinFile: String? = null,      // HF 仓库内 bin 路径（双轨下载用；null=由 hfFile 同目录推断）
+        val hfZip: String? = null,          // ★ HF 仓库内 zip 路径（内含 bin+onnx；设置后云下载改为整包 zip 下载→解压部署，本地 zip 导入同样适用）
         val deployOnnxName: String? = null, // 部署到模型目录后的 onnx 文件名（null=用 asset 文件名）
         val deployBinName: String? = null   // 部署到模型目录后的 bin 文件名（★必须与 onnx 内 ep_cache_context 引用一致）
     ) {
@@ -139,6 +141,16 @@ object ModelManager {
             assetBin = "qnn/qnn_modnet_sm8550_512.bin",
             deployOnnxName = "qnn_modnet_sm8550_512.onnx", // App 规范名
             deployBinName = "qnn_modnet_sm8550_512.bin" // ★=onnx 内 ep_cache_context 引用（已规范化）
+        ),
+        BuiltinModel(
+            id = "qnn_realesrgan",
+            name = "Real-ESRGAN QNN-HTP",
+            hfRepo = "zuimengqm/rmbg-qnn-realesrgan",
+            hfFile = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip",
+            hfZip = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip",
+            sizeBytes = 30_034_102L,
+            description = "4x 超分 · SM8550/V73 QNN HTP · 30MB（512→2048）",
+            kind = ModelKind.QNN
         )
     )
 
@@ -330,6 +342,244 @@ object ModelManager {
     private fun cacheDirForImport(): File = File(System.getProperty("java.io.tmpdir") ?: ".", "rmbg_import_cache").apply { mkdirs() }
 
 
+    /**
+     * 从 zip 导入【超分模型】（onnx + 配套 .bin 一起打包，QNN EPContext 或普通 ONNX 皆可）。
+     * ★ 与抠图模型隔离：解压到 modelDir()/superres/ 子目录，onnx 固定名 superres_model.onnx，
+     *    bin 按 onnx 内 ep_cache_context 引用名放置。绝不进入 localModels()（其只扫顶层 model_local_*）。
+     *
+     * @param zipFile zip 源文件
+     * @return 部署后的 onnx 绝对路径（失败返回 null）
+     */
+    fun importSuperResModelZip(zipFile: File): String? {
+        val srDir = File(modelDir(), "superres").apply { mkdirs() }
+        val tmpDir = File(zipFile.parentFile ?: cacheDirForImport(), "sr_zip_import_${System.currentTimeMillis()}")
+        return try {
+            tmpDir.mkdirs()
+            // 1) 解压 zip（限制总量；QNN bin 可达 1GB+，放宽 4GB）
+            var totalBytes = 0L
+            java.util.zip.ZipFile(zipFile).use { zf ->
+                val entries = zf.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val name = entry.name
+                    if (!name.endsWith(".onnx", ignoreCase = true) && !name.endsWith(".bin", ignoreCase = true)) continue
+                    totalBytes += entry.size
+                    if (totalBytes > 4L * 1024 * 1024 * 1024) {
+                        android.util.Log.e("RMBG-MODEL", "超分 zip 解压超限，中止")
+                        return@importSuperResModelZip null
+                    }
+                    val baseName = name.substringAfterLast('/').substringAfterLast('\\')
+                    if (baseName.isEmpty()) continue
+                    val outFile = File(tmpDir, baseName)
+                    zf.getInputStream(entry).use { input -> outFile.outputStream().use { out -> input.copyTo(out) } }
+                }
+            }
+
+            // 2) 找主 onnx（第一个 .onnx）
+            val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) } ?: emptyArray()
+            if (onnxFiles.isEmpty()) {
+                android.util.Log.e("RMBG-MODEL", "超分 zip 内无 .onnx 文件")
+                return@importSuperResModelZip null
+            }
+            val mainOnnx = onnxFiles[0]
+
+            // 3) 部署 onnx（固定名 superres_model.onnx）
+            val destOnnx = File(srDir, "superres_model.onnx")
+            mainOnnx.copyTo(destOnnx, overwrite = true)
+
+            // 4) 若为 EPContext，提取 bin 引用并放置同目录（embed_mode=0 要求 onnx/bin 同目录）
+            val binRef = extractEpCacheContext(mainOnnx)
+            val binFiles = tmpDir.listFiles { _, n -> n.endsWith(".bin", ignoreCase = true) } ?: emptyArray()
+            val binSrc = when {
+                binRef != null -> binFiles.firstOrNull { it.name.equals(binRef, ignoreCase = true) }
+                    ?: binFiles.firstOrNull { it.name.contains(binRef, ignoreCase = true) }
+                    ?: binFiles.firstOrNull { binRef.contains(it.nameWithoutExtension, ignoreCase = true) }
+                else -> null
+            } ?: binFiles.firstOrNull()
+            if (binSrc != null) {
+                val destName = binRef ?: binSrc.name
+                binSrc.copyTo(File(srDir, destName), overwrite = true)
+                // ★ 规范化 onnx 内嵌 ep_cache_context 为相对路径
+                normalizeEpContextPath(destOnnx)
+                android.util.Log.i("RMBG-MODEL", "超分 EPContext 已部署 bin=$destName")
+            } else if (binRef != null) {
+                android.util.Log.e("RMBG-MODEL", "超分 EPContext 引用 bin=$binRef 但 zip 内无 .bin")
+            }
+
+            if (destOnnx.exists()) destOnnx.absolutePath else null
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "超分 zip 导入失败", e)
+            null
+        } finally {
+            try { tmpDir.deleteRecursively() } catch (_: Exception) {}
+        }
+    }
+
+
+    /** 超分模型内置仓库（HF）与 zip 路径 */
+    const val SUPER_RES_HF_REPO = "zuimengqm/rmbg-qnn-realesrgan"
+    const val SUPER_RES_HF_ZIP = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip"
+    /** 内置 CPU 超分资产路径（普通 ONNX，免下载） */
+    const val SUPER_RES_CPU_ASSET = "models/realesrgan_anime6b.onnx"
+
+    /** 超分模型部署目录（与抠图隔离：modelDir()/superres/） */
+    fun superResDir(): File = File(modelDir(), "superres").apply { mkdirs() }
+
+    /**
+     * ★ 超分模型云下载（智能路径）：
+     *  - QNN 可用且当前设备匹配 SM8550 → 从 HF 下载超分 QNN zip（onnx+bin）→ 部署到 superres/ → 返回 onnx 绝对路径
+     *  - 否则（CPU/无 QNN）→ 返回 null（由调用方回退内置 CPU 资产 SUPER_RES_CPU_ASSET，免下载）
+     * @return 部署后的超分 onnx 绝对路径（QNN）；null 表示回退 CPU
+     */
+    suspend fun downloadSuperResModel(
+        context: Context,
+        listener: ProgressListener? = null
+    ): String? = withContext(Dispatchers.IO) {
+        initContext(context)
+        // ★ 已部署（superres/superres_model.onnx 存在）→ 直接返回，免重复下载
+        val srDir = superResDir()
+        val existing = File(srDir, "superres_model.onnx")
+        if (existing.exists() && existing.length() > 100) {
+            return@withContext existing.absolutePath
+        }
+        // 设备不匹配 SM8550 → 无法用当前 QNN 超分，返回 null 走 CPU
+        if (!deviceSocModel().uppercase().contains("SM8550")) {
+            return@withContext null
+        }
+        val zipDst = File(modelDir(), "qnn_realesrgan_sm8550_qairt250_fp32.zip")
+        val ok = downloadModel(
+            context = context,
+            hfRepo = SUPER_RES_HF_REPO,
+            hfFile = SUPER_RES_HF_ZIP,
+            destFile = zipDst,
+            listener = listener
+        )
+        if (!ok || !zipDst.exists() || zipDst.length() < 1_000_000L) {
+            zipDst.delete()
+            return@withContext null
+        }
+        val path = importSuperResModelZip(zipDst)
+        zipDst.delete() // 部署后清理源 zip
+        path
+    }
+
+    /** 超分模型是否已就绪（导入或部署到 superres/ 的 onnx 存在） */
+    fun isSuperResReady(): Boolean {
+        val f = File(superResDir(), "superres_model.onnx")
+        return f.exists() && f.length() > 100
+    }
+
+    /** 删除已部署/导入的超分模型文件（superres/ 目录） */
+    fun deleteSuperResModel(): Boolean {
+        return try {
+            val dir = superResDir()
+            var ok = true
+            dir.listFiles()?.forEach { ok = it.delete() && ok }
+            ok
+        } catch (_: Exception) { false }
+    }
+
+    // ================= Anime-Seg 多 NPU 变体下载（按设备 SoC 自动匹配）=================
+    /** Anime-Seg 各 SoC 变体 → HF zip（SM8550 无 zip，走内置 v73 双文件） */
+    fun animeSegZipForSoc(soc: String): String? = when (soc.uppercase()) {
+        "SM8350" -> "qnn/qnn_animeseg_sm8350_qairt250_fp32.zip"
+        "SM8450" -> "qnn/qnn_animeseg_sm8450_qairt250_fp32.zip"
+        "SM8650" -> "qnn/qnn_animeseg_sm8650_qairt250_fp32.zip"
+        "SM8750" -> "qnn/qnn_animeseg_sm8750_qairt250_fp32.zip"
+        "SM8850" -> "qnn/qnn_animeseg_sm8850_qairt250_fp32.zip"
+        else -> null   // SM8550 或未知 → 用内置 v73（assets 兜底 + 双文件下载）
+    }
+
+    /**
+     * ★ Anime-Seg 多 NPU 变体下载（按设备 SoC 自动匹配对应 QNN 编译产物）：
+     *  - SM8350/8450/8650/8750/8850 → 下载对应 SoC 的 qairt250 zip → 解压 → 统一部署为
+     *    qnn_animeseg_v73.onnx/.bin（改写 onnx 内 ep_cache_context 引用），引擎固定加载 v73 名。
+     *  - SM8550 / 未知 SoC → 用内置 assets 的 v73 双文件（ensureQnnContextDual 兜底）。
+     * @return 是否部署成功
+     */
+    suspend fun downloadAnimeSeg(
+        context: Context,
+        listener: ProgressListener? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        initContext(context)
+        val bm = builtinModels.find { it.id == "qnn_animeseg" } ?: return@withContext false
+        val onnxDst = qnnContextFileFor(bm.id) ?: return@withContext false
+        val binDst = qnnContextBinFileFor(bm.id) ?: return@withContext false
+
+        // ① 已部署（v73 onnx+bin 就位）→ 直接完成
+        if (onnxDst.exists() && onnxDst.length() > 100 && binDst.exists() && binDst.length() > 1_000_000) {
+            return@withContext true
+        }
+
+        val soc = deviceSocModel().uppercase()
+        val zip = animeSegZipForSoc(soc)
+        // ② 无对应 SoC zip（SM8550/未知）→ 走内置 v73 assets + 双文件下载
+        if (zip == null) {
+            return@withContext ensureQnnContextDual(context, "qnn_animeseg", listener)
+        }
+
+        // ③ 有对应 SoC zip → 下载 + 解压 + 统一部署为 v73 名
+        val dir = modelDir().also { it.mkdirs() }
+        val zipDst = File(dir, "qnn_animeseg_${soc}.zip")
+        val mainHandler = Handler(Looper.getMainLooper())
+        val zipOk = downloadModel(
+            context = context,
+            hfRepo = bm.hfRepo,
+            hfFile = zip,
+            destFile = zipDst,
+            listener = listener
+        )
+        if (!zipOk || !zipDst.exists() || zipDst.length() < 1_000_000L) {
+            zipDst.delete()
+            return@withContext false
+        }
+
+        // 解压 zip → 找 onnx/bin → 部署为 v73 名（改写 ep_cache_context 引用）
+        val tmpDir = File(dir, "animeseg_zip_import_${System.currentTimeMillis()}")
+        var deployed = false
+        try {
+            tmpDir.mkdirs()
+            var totalBytes = 0L
+            java.util.zip.ZipFile(zipDst).use { zf ->
+                val entries = zf.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val name = entry.name
+                    if (!name.endsWith(".onnx", ignoreCase = true) && !name.endsWith(".bin", ignoreCase = true)) continue
+                    totalBytes += entry.size
+                    if (totalBytes > 2L * 1024 * 1024 * 1024) return@use
+                    val baseName = name.substringAfterLast('/').substringAfterLast('\\')
+                    if (baseName.isEmpty()) continue
+                    zf.getInputStream(entry).use { input ->
+                        File(tmpDir, baseName).outputStream().use { out -> input.copyTo(out) }
+                    }
+                }
+            }
+            val onnxFile = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) }?.firstOrNull()
+            val binFile = tmpDir.listFiles { _, n -> n.endsWith(".bin", ignoreCase = true) }?.firstOrNull()
+            if (onnxFile != null && binFile != null) {
+                val destOnnx = File(dir, "qnn_animeseg_v73.onnx")
+                val destBin = File(dir, "qnn_animeseg_v73.bin")
+                onnxFile.copyTo(destOnnx, overwrite = true)
+                binFile.copyTo(destBin, overwrite = true)
+                // ★ 改写 onnx 内 ep_cache_context 引用为 v73.bin（各 SoC 内部名不同）
+                normalizeEpContextPath(destOnnx, "qnn_animeseg_v73.bin")
+                deployed = destOnnx.length() > 100 && destBin.length() > 1_000_000
+                if (deployed) {
+                    android.util.Log.i("RMBG-MODEL", "Anime-Seg 已按 SoC=$soc 部署为 v73 名")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "Anime-Seg SoC zip 解压部署失败", e)
+        } finally {
+            zipDst.delete()
+            try { tmpDir.deleteRecursively() } catch (_: Exception) {}
+        }
+        deployed
+    }
+
     /** 删除本地导入的模型 */
     fun deleteLocalModel(id: String): Boolean {
         val f = File(modelDir(), "model_$id.onnx")
@@ -493,9 +743,11 @@ object ModelManager {
      *    这样每层长度前缀都按重编码后真实长度重新计算，结构始终合法
      *    （与 onnx 库输出字节级一致，已用 python 验证 + 幂等）。
      *
-     * @return 是否发生了重写（true = 原来是绝对路径/含目录分隔符，已改写为 basename）
+     * @param targetBinName 可选：直接把 ep_cache_context 引用改写为指定 bin 文件名（用于各 SoC 变体 zip 部署时统一改名；
+     *                       否则沿用"绝对路径 → basename"逻辑）
+     * @return 是否发生了重写（true = 已改写）
      */
-    fun normalizeEpContextPath(file: File): Boolean {
+    fun normalizeEpContextPath(file: File, targetBinName: String? = null): Boolean {
         if (!file.exists() || file.length() == 0L || file.length() > 64L * 1024 * 1024) return false
         try {
             val bytes = file.readBytes()
@@ -563,6 +815,17 @@ object ModelManager {
                                 copyField(out, field, 2, payload)
                             } else if (field == 4 && name == "ep_cache_context") {
                                 val s = String(payload, Charsets.UTF_8)
+                                // ★ 指定目标 bin 名：直接把引用改写为目标名（用于各 SoC 变体统一部署名）
+                                if (targetBinName != null) {
+                                    if (s != targetBinName) {
+                                        copyField(out, field, 2, targetBinName.toByteArray(Charsets.UTF_8))
+                                        changed[0] = true
+                                    } else {
+                                        copyField(out, field, 2, payload)
+                                    }
+                                    pos = pEnd
+                                    continue
+                                }
                                 if (s.contains('/') || s.contains('\\')) {
                                     val base = s.substringAfterLast('/').substringAfterLast('\\')
                                     if (base.endsWith(".bin") && base.length > 4 &&
@@ -750,8 +1013,8 @@ object ModelManager {
         return -1
     }
 
-    /** 分块下载并发数 */
-    private const val DOWNLOAD_THREADS = 4
+    /** 分块下载并发数（★ 8 并发：更快利用带宽；QNN bin 大文件收益明显） */
+    private const val DOWNLOAD_THREADS = 8
 
     // ---- 下载取消支持 ----
     /** 请求取消当前下载：置位后下载循环在每个分块的读循环里检测并中断 */
@@ -771,6 +1034,7 @@ object ModelManager {
     /**
      * 快速探测镜像源/URL 是否可达（HEAD 请求，短超时）。
      * 用于下载前/镜像切换前预检，避免每个镜像白白等待 connectTimeout(30s)。
+     * ★ 线程安全 + 可重入：不阻塞主线程，内部自带 client（不共享下载连接池）。
      * @param url 要探测的地址（域名根或完整 URL 均可）
      * @param timeoutMs 探测超时（默认 4s）
      * @return true=可达
@@ -794,10 +1058,148 @@ object ModelManager {
     )
 
     @Volatile
-    var selectedMirrorIndex: Int = 0
+    var selectedMirrorIndex: Int = -1   // ★ -1 = 自动（启动/下载前探测最优源）；0/1 = 手动指定
 
     @Volatile
     var activeMirrorIndex: Int = -1
+
+    // ---- 自动镜像探测缓存（避免每次下载都探测，TTL 5 分钟）----
+    @Volatile
+    private var autoMirrorBest: Int = -1
+    @Volatile
+    private var autoMirrorProbedAt: Long = 0L
+    private const val AUTO_MIRROR_TTL_MS = 5 * 60 * 1000L
+
+    /**
+     * 自动探测最优镜像源（国内 hf-mirror / 国外 huggingface），返回镜像 index。
+     * 并行 HEAD 探测两个源：可达且耗时最短者胜出；都不可达返回 -1。
+     * 结果缓存 5 分钟（避免频繁探测浪费流量/电量）。
+     */
+    suspend fun detectBestMirror(): Int = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (autoMirrorBest >= 0 && now - autoMirrorProbedAt < AUTO_MIRROR_TTL_MS) {
+            return@withContext autoMirrorBest
+        }
+        val results = mirrors.mapIndexed { idx, m ->
+            async {
+                val t0 = System.currentTimeMillis()
+                val ok = quickProbe(m.baseUrl, 6000)
+                val ms = System.currentTimeMillis() - t0
+                if (ok) idx to ms else null
+            }
+        }.mapNotNull { it.await() }
+        val best = results.minByOrNull { it.second }?.first ?: -1
+        autoMirrorBest = best
+        autoMirrorProbedAt = now
+        best
+    }
+
+    /** 清除自动镜像探测缓存（手动切换镜像后调用，下次下载重新探测） */
+    fun invalidateAutoMirror() {
+        autoMirrorBest = -1
+        autoMirrorProbedAt = 0L
+    }
+
+    /** 当前实际应使用的镜像起始 index：自动(-1) → 探测；手动 → 固定 */
+    suspend fun effectiveMirrorIndex(): Int = if (selectedMirrorIndex < 0) {
+        detectBestMirror().coerceIn(0, mirrors.size - 1)
+    } else {
+        selectedMirrorIndex.coerceIn(0, mirrors.size - 1)
+    }
+
+    // ================= 设备能力自动识别（QNN/CPU + 锁定型号）=================
+    /** 当前设备 SoC 型号（如 SM8550）；Android 8+ 有 SOC_MODEL，老设备回退 hardware */
+    fun deviceSocModel(): String = runCatching {
+        android.os.Build.SOC_MODEL?.trim().orEmpty()
+    }.getOrDefault("").ifBlank {
+        runCatching { android.os.Build.HARDWARE }.getOrDefault("")
+    }
+
+    /** 是否为骁龙（Qualcomm）SoC：SM/QCS/QCM/SDM/MSM 前缀均视为高通平台 */
+    fun isQualcommSoc(): Boolean {
+        val soc = deviceSocModel().uppercase()
+        return listOf("SM", "QCS", "QCM", "SDM", "MSM", "SM8", "SM7", "SM6")
+            .any { soc.startsWith(it) } || soc.isBlank().not() && soc.contains("SM8550")
+    }
+
+    /** 是否支持 QNN HTP：骁龙 SoC + FastRPC 通信库 libcdsprpc.so 存在（QNN HTP 硬性依赖） */
+    fun isQnnSupported(context: Context): Boolean {
+        if (!isQualcommSoc()) return false
+        return try {
+            val candidates = listOf(
+                "/vendor/lib64/libcdsprpc.so",
+                "/vendor/lib/libcdsprpc.so",
+                "/system/lib64/libcdsprpc.so",
+                "/system/lib/libcdsprpc.so"
+            )
+            candidates.any { File(it).exists() } || runCatching {
+                System.loadLibrary("cdsprpc"); true
+            }.getOrDefault(false)
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * QNN 模型声明的目标 SoC（如 SM8550/8GEN2 → "SM8550"）；未声明返回 null（通用）。
+     * 从模型 id / HF 文件名 / 描述中识别（App 规范命名 qnn_<model>_<soc/后缀>）。
+     */
+    fun qnnTargetSoc(bm: BuiltinModel): String? {
+        if (!bm.isQnn) return null
+        val text = (bm.id + " " + bm.hfFile + " " + bm.hfBinFile + " " + bm.description).uppercase()
+        return when {
+            text.contains("SM8350") || text.contains("8GEN1") -> "SM8350"
+            text.contains("SM8450") || text.contains("8GEN1+") || text.contains("8PLUSGEN1") -> "SM8450"
+            text.contains("SM8550") || text.contains("8GEN2") -> "SM8550"
+            text.contains("SM8650") || text.contains("8GEN3") -> "SM8650"
+            text.contains("SM8750") || text.contains("8GEN4") -> "SM8750"
+            text.contains("SM8850") || text.contains("8GEN5") || text.contains("8ELITE") -> "SM8850"
+            else -> null   // 未声明 → 通用，适用
+        }
+    }
+
+    /**
+     * QNN 模型是否匹配当前设备型号（★ 锁定型号）：
+     * 模型声明了目标 SoC（如 sm8550/8gen2）时，必须与当前设备 SoC 一致；
+     * 未声明目标型号（通用 v2/SDK250 格式）视为适用。
+     */
+    fun qnnModelMatchesDevice(bm: BuiltinModel): Boolean {
+        if (!bm.isQnn) return true
+        val soc = deviceSocModel().uppercase()
+        val target = qnnTargetSoc(bm) ?: return true   // 未声明 → 通用，适用
+        return soc == target
+    }
+
+    /**
+     * 自动选择默认模型（QNN/CPU 识别 + 锁定型号）：
+     * 设备支持 QNN（骁龙 + libcdsprpc）时：
+     *   ★ 优先选「明确声明了当前设备型号」的 QNN 模型（如 SM8550 → qnn_animeseg）；
+     *     再退到未声明型号的通用 QNN 模型（如 qnn_rmbg14_v2）；
+     *   否则回退 CPU 默认模型（anime_seg）。
+     */
+    fun autoPickDefaultModel(context: Context): String {
+        if (!isQnnSupported(context)) {
+            return builtinModels.firstOrNull { !it.isQnn }?.id ?: "anime_seg"
+        }
+        val soc = deviceSocModel().uppercase()
+        // ① 明确声明匹配当前型号的 QNN 模型（按内置列表顺序，qnn_animeseg 在 qnn_modnet 前）
+        val declaredMatch = builtinModels.firstOrNull {
+            it.isQnn && qnnTargetSoc(it) == soc && qnnModelMatchesDevice(it)
+        }
+        // ② 未声明型号的通用 QNN 模型
+        val genericQnn = builtinModels.firstOrNull {
+            it.isQnn && qnnTargetSoc(it) == null && qnnModelMatchesDevice(it)
+        }
+        // ③ CPU 兜底
+        return declaredMatch?.id
+            ?: genericQnn?.id
+            ?: builtinModels.firstOrNull { !it.isQnn }?.id
+            ?: "anime_seg"
+    }
+
+    /** QNN 可用且当前设备匹配该模型 → 应默认开 QNN 加速 */
+    fun shouldAutoEnableQnn(context: Context, modelId: String): Boolean {
+        val bm = builtinModels.find { it.id == modelId } ?: return false
+        return bm.isQnn && isQnnSupported(context) && qnnModelMatchesDevice(bm)
+    }
 
     /** 可配置的模型仓库与文件路径（UI 可修改） */
     @Volatile
@@ -950,8 +1352,16 @@ object ModelManager {
             return@withContext true
         }
 
-        // ③ assets 缺失/损坏 → HF 下载双文件
+        // ③ assets 缺失/损坏 → HF 下载
         val hfRepo = bm.hfRepo
+
+        // ★ zip 整包模式：hfZip 非空 → 下载整个 zip（内含 bin+onnx）→ 解压部署
+        //   与本地 zip 导入（importLocalModelZip）共用解压/路径规范化/校验逻辑
+        if (bm.hfZip != null) {
+            return@withContext downloadQnnZip(context, bm, hfRepo, listener)
+        }
+
+        // 双文件模式（onnx + bin 分开下载，hfZip 未设置时的历史路径）
         val hfOnnx = bm.hfFile
         val hfBin = bm.hfBinFile ?: hfOnnx.removeSuffix(".onnx") + ".bin"
         val mainHandler = Handler(Looper.getMainLooper())
@@ -959,7 +1369,7 @@ object ModelManager {
 
         // 从 HF 镜像下载单个文件到部署目标（镜像循环 + 分块 + 断点续传，与 CPU downloadModel 同策略）
         suspend fun downloadOne(repoId: String, repoFile: String, target: File): Boolean {
-            val start = selectedMirrorIndex.coerceIn(0, mirrors.size - 1)
+            val start = effectiveMirrorIndex()
             val order = (start until mirrors.size) + (0 until start)
             for (idx in order) {
                 // ★ 支持取消：已请求取消则不继续尝试其他镜像
@@ -969,7 +1379,7 @@ object ModelManager {
                 try {
                     // ★ 下载前快速连通性检查：不可达镜像直接跳过
                     if (!quickProbe(mirror.baseUrl)) {
-                        mainHandler.post { listener?.onMirrorError(mirror.name, "网络不可达") }
+                        mainHandler.post { listener?.onMirrorError(mirror.name, "网络不可达（预检失败）") }
                         continue
                     }
                     mainHandler.post { listener?.onMirrorSwitch(idx, mirror.name) }
@@ -978,24 +1388,49 @@ object ModelManager {
                         if (hfToken.isNotBlank()) b.header("Authorization", "Bearer $hfToken")
                         return b.build()
                     }
-                    // 探测总大小（Range: bytes=0-0 穿透 302 拿真实 Content-Length）
+                    // ★ 第一步：手动解析重定向（client 已关自动跟随）拿到真实下载 URL
+                    //   HF resolve 直链会 302 → cas-bridge.xethub.hf.co 签名 CDN URL。
+                    var realUrl = fu
+                    try {
+                        client.newCall(buildReq(fu)).execute().use { p ->
+                            if (p.code == 302 || p.code == 307 || p.code == 308) {
+                                p.header("Location")?.takeIf { it.startsWith("http") }?.let { realUrl = it }
+                            } else {
+                                android.util.Log.w("RMBG-MODEL", "resolve 未重定向: HTTP ${p.code}（非 302/307/308，直接用原 URL）")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("RMBG-MODEL", "解析重定向失败: ${e.message}，直接用原 URL")
+                    }
+
+                    // 第二步：对真实下载 URL 发 Range: bytes=0-0 探测总大小（206 + Content-Range）
                     var probed = 0L
                     try {
-                        client.newCall(buildReq(fu).newBuilder().header("Range", "bytes=0-0").build())
+                        client.newCall(buildReq(realUrl).newBuilder().header("Range", "bytes=0-0").build())
                             .execute().use { resp ->
                                 if (resp.isSuccessful || resp.code == 206) {
                                     val cr = resp.header("Content-Range")
                                     probed = cr?.substringAfter('/')?.toLongOrNull()
                                         ?: resp.body?.contentLength() ?: 0L
+                                } else {
+                                    android.util.Log.w("RMBG-MODEL", "大小探测 HTTP ${resp.code} <- $mirror.name")
                                 }
                             }
-                    } catch (_: Exception) { probed = 0L }
+                    } catch (e: Exception) {
+                        android.util.Log.w("RMBG-MODEL", "大小探测失败(${mirror.name}): ${e.message}")
+                    }
                     // 用元数据大小兜底：onnx≈sizeBytes-bin，bin=binExpected
                     val expectSize = if (target == onnxDst) (bm.sizeBytes - binExpected(bm)).coerceAtLeast(100L)
                         else binExpected(bm)
                     val totalBytes = if (probed in 1 until expectSize / 2) expectSize else probed
-                    if (target == binDst && totalBytes < 1_000_000) continue // bin 至少 1MB
-                    if (target == onnxDst && totalBytes < 100) continue
+                    if (target == binDst && totalBytes < 1_000_000) {
+                        android.util.Log.e("RMBG-MODEL", "bin 大小异常(${totalBytes}B)，跳过 $mirror.name")
+                        continue // bin 至少 1MB
+                    }
+                    if (target == onnxDst && totalBytes < 100) {
+                        android.util.Log.e("RMBG-MODEL", "onnx 大小异常(${totalBytes}B)，跳过 $mirror.name")
+                        continue
+                    }
                     // 断点续传
                     val partBase = target.name
                     val existing = File(dir, "$partBase.part")
@@ -1003,24 +1438,24 @@ object ModelManager {
                         existing.renameTo(target)
                         return@downloadOne true
                     }
-                    // 解析 302 真实 URL（CDN 签名，Range 才生效）
-                    var realUrl = fu
-                    try {
-                        client.newCall(buildReq(fu)).execute().use { p ->
-                            if (p.code == 302 || p.code == 307 || p.code == 308)
-                                p.header("Location")?.let { realUrl = it }
-                        }
-                    } catch (_: Exception) {}
+                    // 分块下载（直接对签名 CDN URL 发 Range）
                     val downloaded = downloadChunks(
                         client = client, baseUrl = realUrl, totalBytes = totalBytes,
                         dir = dir, partPrefix = partBase, token = hfToken,
                         threads = DOWNLOAD_THREADS,
                         onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
                     )
-                    if (downloaded != totalBytes) continue
+                    if (downloaded != totalBytes) {
+                        android.util.Log.e("RMBG-MODEL", "分块下载不完整 ${downloaded}/${totalBytes} <- $mirror.name")
+                        continue
+                    }
                     mergeChunks(dir, partBase, totalBytes, target)
                     return@downloadOne true
-                } catch (_: Exception) { continue }
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-MODEL", "下载失败(${mirror.name}): ${e.javaClass.simpleName}: ${e.message}")
+                    mainHandler.post { listener?.onMirrorError(mirror.name, "${e.javaClass.simpleName}: ${e.message}") }
+                    continue
+                }
             }
             return@downloadOne false
         }
@@ -1036,22 +1471,167 @@ object ModelManager {
             binDst.exists() && binDst.length() > 1_000_000
     }
 
+    /**
+     * ★ zip 整包模式：从 HF 云下载 QNN 模型 zip（内含 bin+onnx），解压部署到模型目录。
+     *   与本地 zip 导入（importLocalModelZip）共用解压/路径规范化/校验逻辑：
+     *   - 下载：镜像循环 + 302 解析 + Range 分块 + 断点续传（复用 downloadModel 的 destFile 通道）
+     *   - 部署：解压 zip → 找主 onnx → 提取 ep_cache_context 引用 bin → 复制部署 → normalize 路径
+     *
+     * @param bm  内置 QNN 模型
+     * @param hfRepo HF 仓库 id
+     * @param listener 进度回调（下载阶段触发）
+     */
+    private suspend fun downloadQnnZip(
+        context: Context,
+        bm: BuiltinModel,
+        hfRepo: String,
+        listener: ProgressListener? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        initContext(context)
+        val dir = modelDir().also { it.mkdirs() }
+        val zipDst = File(dir, "${bm.id}.zip")
+        val mainHandler = Handler(Looper.getMainLooper())
+
+        // ① 已有解压产物 → 直接完成
+        val onnxDst = qnnContextFileFor(bm.id)
+        val binDst = qnnContextBinFileFor(bm.id)
+        if (onnxDst != null && binDst != null &&
+            onnxDst.exists() && onnxDst.length() > 100 &&
+            binDst.exists() && binDst.length() > 1_000_000
+        ) {
+            return@withContext true
+        }
+
+        // ② 下载 zip（复用 downloadModel 的 destFile 通道：镜像循环 + 302 + 分块 + 断点续传）
+        val zipOk = downloadModel(
+            context = context,
+            hfRepo = hfRepo,
+            hfFile = bm.hfZip!!,
+            destFile = zipDst,
+            listener = listener
+        )
+
+        // ③ 解压部署（zip → bin+onnx → 模型目录，与本地导入同构）
+        if (!zipOk || !zipDst.exists()) {
+            mainHandler.post { listener?.onMirrorError("zip", "zip 下载失败或文件不存在") }
+            return@withContext false
+        }
+        val deployed = deployQnnZip(zipDst, bm, mainHandler)
+        if (!deployed) {
+            mainHandler.post { listener?.onMirrorError("zip", "zip 解压部署失败（检查包内 onnx/bin 结构）") }
+            return@withContext false
+        }
+        true
+    }
+
+    /**
+     * 解压 QNN zip 并部署到模型目录（onnx+bin 同目录，ep_cache_context 规范化）。
+     * 与 importLocalModelZip 的部署段共用逻辑，但部署名固定为内置模型的 deployOnnxName/deployBinName。
+     */
+    private fun deployQnnZip(
+        zipFile: File,
+        bm: BuiltinModel,
+        mainHandler: Handler
+    ): Boolean {
+        try {
+            val dir = modelDir().also { it.mkdirs() }
+            val tmpDir = File(dir, "zip_deploy_${System.currentTimeMillis()}")
+            tmpDir.mkdirs()
+            try {
+                // 1) 解压 zip（只取 onnx + bin）
+                var totalBytes = 0L
+                java.util.zip.ZipFile(zipFile).use { zf ->
+                    val entries = zf.entries()
+                    while (entries.hasMoreElements()) {
+                        val entry = entries.nextElement()
+                        if (entry.isDirectory) continue
+                        val name = entry.name
+                        if (!name.endsWith(".onnx", ignoreCase = true) &&
+                            !name.endsWith(".bin", ignoreCase = true)) continue
+                        totalBytes += entry.size
+                        if (totalBytes > 4L * 1024 * 1024 * 1024) { // 4GB 上限
+                            android.util.Log.e("RMBG-MODEL", "zip 解压超限，中止")
+                            return false
+                        }
+                        val baseName = name.substringAfterLast('/').substringAfterLast('\\')
+                        if (baseName.isEmpty()) continue
+                        val outFile = File(tmpDir, baseName)
+                        zf.getInputStream(entry).use { input ->
+                            outFile.outputStream().use { out -> input.copyTo(out) }
+                        }
+                    }
+                }
+
+                // 2) 找主 onnx（优先 hfFile 文件名对应的，否则第一个 .onnx）
+                val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) }
+                    ?: emptyArray()
+                if (onnxFiles.isEmpty()) {
+                    android.util.Log.e("RMBG-MODEL", "zip 内无 .onnx 文件")
+                    return false
+                }
+                val wantOnnx = bm.hfFile.substringAfterLast('/').substringAfterLast('\\')
+                val mainOnnx = onnxFiles.firstOrNull { it.name == wantOnnx } ?: onnxFiles[0]
+
+                // 3) 部署 onnx（固定内置部署名）
+                val destOnnx = File(dir, bm.deployOnnxName ?: mainOnnx.name)
+                mainOnnx.copyTo(destOnnx, overwrite = true)
+
+                // 4) 提取 bin 引用 + 匹配 bin（精确 → 包含 → 唯一兜底，与 importLocalModelZip 同构）
+                val binRef = extractEpCacheContext(mainOnnx)
+                val binFiles = tmpDir.listFiles { _, n -> n.endsWith(".bin", ignoreCase = true) } ?: emptyArray()
+                val binSrc = when {
+                    binRef != null -> binFiles.firstOrNull { it.name.equals(binRef, ignoreCase = true) }
+                        ?: binFiles.firstOrNull { it.name.contains(binRef, ignoreCase = true) }
+                        ?: binFiles.firstOrNull { binRef.contains(it.nameWithoutExtension, ignoreCase = true) }
+                    else -> null
+                } ?: binFiles.firstOrNull()
+                if (binSrc == null) {
+                    android.util.Log.e("RMBG-MODEL", "EPContext 引用 bin=$binRef 但 zip 内无 .bin 文件")
+                    return false
+                }
+                // bin 名必须以 onnx 内部引用为准（embed_mode=0 要求），复制并改名
+                val destName = binRef ?: (bm.deployBinName ?: binSrc.name)
+                val destBin = File(dir, destName)
+                binSrc.copyTo(destBin, overwrite = true)
+
+                // 5) 路径规范化（绝对路径 → basename）+ tar 权重包检测
+                if (normalizeEpContextPath(destOnnx)) {
+                    android.util.Log.i("RMBG-MODEL", "zip 部署 EPContext 路径已规范化 -> $destName")
+                }
+                try {
+                    if (destBin.length() > 300) {
+                        val head = destBin.readBytes().take(300).toByteArray()
+                        val isTar = head[257] == 'u'.code.toByte() && head[258] == 's'.code.toByte() &&
+                            head[259] == 't'.code.toByte() && head[260] == 'a'.code.toByte() && head[261] == 'r'.code.toByte()
+                        if (isTar) {
+                            android.util.Log.w("RMBG-MODEL",
+                                "⚠️ 检测到 $destName 是 QNN 工具链 tar 权重包（POSIX tar），ORT QNN EP 无法加载（需要 context binary）。请使用 qnn-context-binary-generator 输出的 .bin")
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                return destOnnx.exists() && destBin.exists() &&
+                    destOnnx.length() > 100 && destBin.length() > 1_000_000
+            } finally {
+                try { tmpDir.deleteRecursively() } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "QNN zip 部署失败", e)
+            return false
+        }
+    }
+
     /** QNN bin 元数据大小（供 onnx 探测大小反推：sizeBytes - bin） */
     private fun binExpected(bm: BuiltinModel): Long {
         // sizeBytes = bin + onnx(≈1KB)，bin 约等于 sizeBytes 扣掉 onnx 头
         return (bm.sizeBytes - 2048L).coerceAtLeast(1_000_000L)
     }
 
-    /** QNN EP 插件文件（从 APK 复制到模型目录，供 registerExecutionProviderLibrary 使用） */
-    val qnnPluginFile: File get() = File(modelDir(), "libonnxruntime_providers_qnn.so")
-
-    /** QNN HTP backend 库（backend_path 指向，与插件同目录） */
-    val qnnHtpFile: File get() = File(modelDir(), "libQnnHtp.so")
-
-    // ★ 已废弃：copyQnnRuntimeLibs()
-    //   历史遗留——曾把 libQnnHtp.so / libQnnHtpV73Stub.so / libQnnSystem.so / libQnnHtpPrepare.so(85MB)
-    //   从 APK 复制到 modelDir（Android/data/.../files/models/），在外部存储白占 ~96MB。
-    //   RmbgOnnxEngine 实际从 nativeLibraryDir 加载 QNN 库，此复制从未被使用，已移除。
+    // ★ 已废弃：qnnPluginFile / qnnHtpFile / copyQnnRuntimeLibs()
+    //   历史遗留——曾把 libonnxruntime_providers_qnn.so / libQnnHtp.so / libQnnHtpV73Stub.so /
+    //   libQnnSystem.so / libQnnHtpPrepare.so(85MB) 从 APK 复制到 modelDir（Android/data/.../files/models/），
+    //   在外部存储白占 ~96MB。
+    //   RmbgOnnxEngine 实际从 nativeLibraryDir 加载 QNN 库，此复制从未被使用，已全部移除。
 
     fun isModelDownloaded(): Boolean {
         // QNN EPContext：检查 onnx + bin 是否都就位（按当前选中 QNN 模型）
@@ -1093,8 +1673,9 @@ object ModelManager {
         return maxOf(1_000_000L, meta / 20)
     }
 
-    /** 检查指定内置模型是否已下载（QNN：onnx+bin 双文件；CPU：单 onnx） */
+    /** 检查指定内置模型是否已下载（QNN：onnx+bin 双文件；CPU：单 onnx；超分：superres/ 目录） */
     fun isBuiltinModelDownloaded(bm: BuiltinModel): Boolean {
+        if (bm.id == "qnn_realesrgan") return isSuperResReady()
         if (bm.isQnn) {
             val o = qnnContextFileFor(bm.id) ?: return false
             val b = qnnContextBinFileFor(bm.id) ?: return false
@@ -1104,8 +1685,9 @@ object ModelManager {
         return f.exists() && f.length() > maxOf(1_000_000L, bm.sizeBytes / 20)
     }
 
-    /** 删除指定内置模型文件（QNN 删 onnx+bin，CPU 删 model_<id>.onnx） */
+    /** 删除指定内置模型文件（QNN 删 onnx+bin，CPU 删 model_<id>.onnx；超分删 superres/） */
     fun deleteBuiltinModel(bm: BuiltinModel): Boolean {
+        if (bm.id == "qnn_realesrgan") return deleteSuperResModel()
         return try {
             if (bm.isQnn) {
                 var ok = true
@@ -1215,11 +1797,20 @@ object ModelManager {
         fun onError(e: Exception)
     }
 
-    private fun buildClient(readTimeoutSec: Long = 120): OkHttpClient =
+    private fun buildClient(readTimeoutSec: Long = 300): OkHttpClient =
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
+            // ★ 连接池复用：并发分块共享连接（8 并发时避免重复握手，提速明显）
+            .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+            // ★ 关闭自动跟随重定向：HF resolve 直链会 302/307/308 到签名 CDN URL，
+            //   手动解析 Location 拿到真实下载地址再分块（curl 实测最稳）。
+            //   若让 OkHttp 自动跟随，跨 host（hf-mirror.com → cas-bridge.xethub.hf.co）
+            //   时 Range 头可能不被保留，CDN 返回 200 全文件 → 8 线程各自抢整个文件
+            //   互相限速断流，part 卡在 1~2MB（已实测复现）。
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
 
     /**
@@ -1246,10 +1837,28 @@ object ModelManager {
 
         var lastError: Exception? = null
 
-        val start = selectedMirrorIndex.coerceIn(0, mirrors.size - 1)
-        val order = (start until mirrors.size) + (0 until start)
+        // ★ 下载自动重试：整体最多尝试 5 次（每轮走完所有镜像源），网络波动时自动恢复
+        val maxAttempts = 5
+        var attempt = 0
+        while (attempt < maxAttempts) {
+            attempt++
+            // 取消检查：用户点击取消立即终止，不再重试
+            if (cancelRequested) {
+                activeMirrorIndex = -1
+                val cancelErr = CancellationException("下载已取消")
+                mainHandler.post { listener?.onError(cancelErr) }
+                return@withContext false
+            }
+            // 重试前等待（递增退避：2s/4s/6s/8s），并提示当前尝试次数
+            if (attempt > 1) {
+                delay(2000L * attempt)
+                mainHandler.post { listener?.onMirrorSwitch(-1, "网络波动，自动重试 $attempt/$maxAttempts ...") }
+            }
 
-        for (idx in order) {
+            val start = effectiveMirrorIndex()
+            val order = (start until mirrors.size) + (0 until start)
+
+            for (idx in order) {
             // ★ 支持取消：已请求取消则不继续尝试其他镜像
             if (cancelRequested) {
                 activeMirrorIndex = -1
@@ -1283,8 +1892,21 @@ object ModelManager {
                     return b.build()
                 }
 
-                // 第一步：GET + Range: bytes=0-0 探测总大小（穿透 302 拿到真实 Content-Length）
-                val probeReq = buildReq(baseUrl).newBuilder()
+                // ★ 第一步：手动解析重定向（client 已关自动跟随）拿到真实下载 URL
+                //   HF resolve 直链（hf-mirror/官方）会 302 → cas-bridge.xethub.hf.co 签名 CDN URL。
+                //   签名 URL 是 Range 分块真正能生效的地址；OkHttp 自动跟随跨 host 时
+                //   Range 头可能丢失导致 CDN 回 200 全文件，所以这里必须手动拿 Location。
+                var realUrl = baseUrl
+                try {
+                    client.newCall(buildReq(baseUrl)).execute().use { p ->
+                        if (p.code == 302 || p.code == 307 || p.code == 308) {
+                            p.header("Location")?.takeIf { it.startsWith("http") }?.let { realUrl = it }
+                        }
+                    }
+                } catch (_: Exception) { /* 直接用 baseUrl */ }
+
+                // 第二步：对真实下载 URL 发 Range: bytes=0-0 探测总大小（206 + Content-Range）
+                val probeReq = buildReq(realUrl).newBuilder()
                     .header("Range", "bytes=0-0")
                     .build()
                 var probedBytes = 0L
@@ -1311,7 +1933,8 @@ object ModelManager {
                 val metaBytes = builtinMeta?.sizeBytes ?: 0L
                 val totalBytes = if (probedBytes in 1 until metaBytes / 2) metaBytes else probedBytes
                 // 当前模型最小有效大小：内置元数据的 5%，至少 1MB（MODNet 25MB 也能通过校验）
-                val minValid = if (destFile != null) 100_000_000L else minValidSize()
+                // ★ 去掉 destFile 强制 100MB 门槛：QNN zip（90MB）与 SD 大包一视同仁，按各自模型阈值校验
+                val minValid = minValidSize()
                 if (totalBytes < minValid) {
                     mirrorFailed("文件过小(${totalBytes / 1024 / 1024}MB)")
                     continue
@@ -1328,17 +1951,8 @@ object ModelManager {
                 }
 
                 // 分块下载前先解析真实下载 URL（跟随 302 拿到 CDN 签名 URL，Range 才生效）
-                var realUrl = baseUrl
-                try {
-                    val probe302 = buildReq(baseUrl)
-                    client.newCall(probe302).execute().use { p ->
-                        if (p.code == 302 || p.code == 307 || p.code == 308) {
-                            p.header("Location")?.let { realUrl = it }
-                        }
-                    }
-                } catch (_: Exception) { /* 直接用 baseUrl */ }
-
-                // 分块下载
+                // ★ 已在上面"第一步"手动解析过（client 关闭了自动跟随），realUrl 已是签名 CDN URL，
+                //   直接用于分块；若解析失败则回退 resolve 直链（OkHttp 会跟随但 Range 可能失效）。
                 val downloadedAll = downloadChunks(
                     client = client,
                     baseUrl = realUrl,
@@ -1365,9 +1979,10 @@ object ModelManager {
             } catch (e: Exception) {
                 mirrorFailed("${e.javaClass.simpleName}: ${e.message}")
             }
-        }
+            } // ---- for 镜像循环结束 ----
+        } // ---- while 重试循环结束 ----
 
-        val err = lastError ?: IllegalStateException("所有镜像源均下载失败")
+        val err = lastError ?: IllegalStateException("所有镜像源下载失败，已自动重试 $maxAttempts 次")
         activeMirrorIndex = -1
         mainHandler.post { listener?.onError(err) }
         false
@@ -1400,8 +2015,19 @@ object ModelManager {
         }
 
         try {
-            // ① 探测总大小（Range: bytes=0-0 穿透 302 拿真实长度）
-            val probeReq = buildReq(url).newBuilder().header("Range", "bytes=0-0").build()
+            // ★ ① 手动解析重定向（client 已关自动跟随）拿到真实下载 URL
+            //   HF resolve 直链 / 其他托管 302 → 签名 CDN URL，Range 分块只有对真实 URL 才生效。
+            var realUrl = url
+            try {
+                client.newCall(buildReq(url)).execute().use { p ->
+                    if (p.code == 302 || p.code == 307 || p.code == 308) {
+                        p.header("Location")?.takeIf { it.startsWith("http") }?.let { realUrl = it }
+                    }
+                }
+            } catch (_: Exception) { /* 直接用 url */ }
+
+            // ② 探测总大小（Range: bytes=0-0 对真实下载 URL 生效，206 + Content-Range）
+            val probeReq = buildReq(realUrl).newBuilder().header("Range", "bytes=0-0").build()
             var totalBytes = 0L
             try {
                 client.newCall(probeReq).execute().use { resp ->
@@ -1423,7 +2049,7 @@ object ModelManager {
                 return@withContext false
             }
 
-            // ② 断点续传：已有完整 model_custom.onnx 则跳过
+            // ③ 断点续传：已有完整 model_custom.onnx 则跳过
             if (target.exists() && target.length() >= totalBytes) {
                 selectedModelId = CUSTOM_MODEL_ID
                 mainHandler.post { listener?.onDone(target) }
@@ -1441,16 +2067,7 @@ object ModelManager {
                 return@withContext okZip
             }
 
-            // ③ 解析 302 真实 URL（CDN 签名，Range 才生效）
-            var realUrl = url
-            try {
-                client.newCall(buildReq(url)).execute().use { p ->
-                    if (p.code == 302 || p.code == 307 || p.code == 308)
-                        p.header("Location")?.let { realUrl = it }
-                }
-            } catch (_: Exception) {}
-
-            // ④ 分块下载到 .part（复用多线程 Range 下载）
+            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range）
             val partBase = "model_custom"
             val downloadedAll = downloadChunks(
                 client = client, baseUrl = realUrl, totalBytes = totalBytes,
@@ -1707,8 +2324,19 @@ object ModelManager {
         }
 
         try {
-            // ① 探测总大小（Range: bytes=0-0 穿透 302 拿真实长度）
-            val probeReq = buildReq(url).newBuilder().header("Range", "bytes=0-0").build()
+            // ★ ① 手动解析重定向（client 已关自动跟随）拿到真实下载 URL
+            //   HF resolve 直链 / 其他托管 302 → 签名 CDN URL，Range 分块只有对真实 URL 才生效。
+            var realUrl = url
+            try {
+                client.newCall(buildReq(url)).execute().use { p ->
+                    if (p.code == 302 || p.code == 307 || p.code == 308) {
+                        p.header("Location")?.takeIf { it.startsWith("http") }?.let { realUrl = it }
+                    }
+                }
+            } catch (_: Exception) { /* 直接用 url */ }
+
+            // ② 探测总大小（Range: bytes=0-0 对真实下载 URL 生效，206 + Content-Range）
+            val probeReq = buildReq(realUrl).newBuilder().header("Range", "bytes=0-0").build()
             var totalBytes = 0L
             try {
                 client.newCall(probeReq).execute().use { resp ->
@@ -1730,22 +2358,13 @@ object ModelManager {
                 return@withContext false
             }
 
-            // ② 断点续传：已有完整 zip 则跳过
+            // ③ 断点续传：已有完整 zip 则跳过
             if (destFile.exists() && destFile.length() >= totalBytes) {
                 mainHandler.post { listener?.onDone(destFile) }
                 return@withContext true
             }
 
-            // ③ 解析 302 真实 URL（CDN 签名，Range 才生效）
-            var realUrl = url
-            try {
-                client.newCall(buildReq(url)).execute().use { p ->
-                    if (p.code == 302 || p.code == 307 || p.code == 308)
-                        p.header("Location")?.let { realUrl = it }
-                }
-            } catch (_: Exception) {}
-
-            // ④ 分块下载到 .part
+            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range）
             val partBase = destFile.name
             val downloadedAll = downloadChunks(
                 client = client, baseUrl = realUrl, totalBytes = totalBytes,

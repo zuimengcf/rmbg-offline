@@ -14,9 +14,9 @@ object Prefs {
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
     // ---- 模型 ----
-    // ★ 默认模型两边统一：anime_seg（Anime-Seg，动漫抠图；QNN 版在 Lite 下自动回退）
+    // ★ 默认空 = 未手动选择：启动时按设备能力自动识别（QNN 支持 + 型号匹配 → 自动选 QNN 模型）
     var selectedModelId: String
-        get() = sp(OperitApp.appContext).getString("selected_model_id", "anime_seg") ?: "anime_seg"
+        get() = sp(OperitApp.appContext).getString("selected_model_id", "") ?: ""
         set(v) = sp(OperitApp.appContext).edit().putString("selected_model_id", v).apply()
 
     var hfRepo: String
@@ -36,8 +36,9 @@ object Prefs {
         get() = sp(OperitApp.appContext).getString("model_url", "") ?: ""
         set(v) = sp(OperitApp.appContext).edit().putString("model_url", v).apply()
 
+    /** 下载镜像源：-1=自动（启动/下载时按区域探测），0=hf-mirror，1=huggingface */
     var mirrorIndex: Int
-        get() = sp(OperitApp.appContext).getInt("mirror_index", 0)
+        get() = sp(OperitApp.appContext).getInt("mirror_index", -1)
         set(v) = sp(OperitApp.appContext).edit().putInt("mirror_index", v).apply()
 
     // ---- 历史排序：0=时间最新 1=时间最旧 2=耗时最短 3=耗时最长 4=模型名 5=文件最小 6=文件最大 ----
@@ -78,7 +79,7 @@ object Prefs {
 
     // ---- ONNX 加速 ----
     var enableNnapi: Boolean
-        get() = sp(OperitApp.appContext).getBoolean("enable_nnapi", false)
+        get() = sp(OperitApp.appContext).getBoolean("enable_nnapi", true)
         set(v) = sp(OperitApp.appContext).edit().putBoolean("enable_nnapi", v).apply()
 
     var enableQnn: Boolean
@@ -150,11 +151,11 @@ object Prefs {
         set(v) = sp(OperitApp.appContext).edit().putString("ai_redraw_negative", v).apply()
 
     var aiRedrawSteps: Int
-        get() = sp(OperitApp.appContext).getInt("ai_redraw_steps", 20)
+        get() = sp(OperitApp.appContext).getInt("ai_redraw_steps", 10)
         set(v) = sp(OperitApp.appContext).edit().putInt("ai_redraw_steps", v.coerceIn(1, 50)).apply()
 
     var aiRedrawCfg: Float
-        get() = sp(OperitApp.appContext).getFloat("ai_redraw_cfg", 6.5f)
+        get() = sp(OperitApp.appContext).getFloat("ai_redraw_cfg", 5.0f)
         set(v) = sp(OperitApp.appContext).edit().putFloat("ai_redraw_cfg", v.coerceIn(1f, 15f)).apply()
 
     /** 重绘强度：默认 0.35 微调修复（更贴原图结构，改动更小）；越高改动越大越接近重绘 */
@@ -197,10 +198,20 @@ object Prefs {
 
     /**
      * AI 重绘推理后端：
-     *  "local"  = 本地自加载引擎（LibStableDiffusionCore，本 App 内启动进程）
+     *  "local"  = 本地自加载引擎（LibStableDiffusionCore，本 App 内启动进程）【仅完整版 normal 可用】
      *  "dream"  = 已安装的 LocalDream App（复用其 8081 HTTP 服务，App 自身不部署模型）
+     * ★ Lite 精简版：未打包本地引擎资产（qnnlibs/sd_core），默认强制走 "dream"
      */
     var aiRedrawBackend: String
-        get() = sp(OperitApp.appContext).getString("ai_redraw_backend", "local") ?: "local"
+        get() = sp(OperitApp.appContext).getString(
+            "ai_redraw_backend",
+            if (BuildConfig.IS_LITE) "dream" else "local"
+        ) ?: if (BuildConfig.IS_LITE) "dream" else "local"
         set(v) = sp(OperitApp.appContext).edit().putString("ai_redraw_backend", v).apply()
+
+    // ---- 4x 超分模型 ----
+    /** 导入的超分模型 onnx 绝对路径（空=用内置 assets realesrgan_anime6b.onnx）。QNN 超分走此路径。 */
+    var superResModelPath: String
+        get() = sp(OperitApp.appContext).getString("super_res_model_path", "") ?: ""
+        set(v) = sp(OperitApp.appContext).edit().putString("super_res_model_path", v).apply()
 }

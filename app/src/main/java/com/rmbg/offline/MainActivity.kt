@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -220,7 +221,12 @@ private fun AboutPage(
                     Icon(Icons.Filled.ContentCut, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
                 }
                 Text("RMBG 离线抠图", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("版本 v$versionName", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // ★ 版本 + 版本类型（完整版/精简版 Lite）
+                Text(
+                    text = "版本 v$versionName${if (BuildConfig.IS_LITE) "（Lite 精简版）" else "（完整版）"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -242,6 +248,41 @@ private fun AboutPage(
             }
         }
 
+        // 更新日志
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("更新日志", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                ChangelogRow("v1.1.2", listOf(
+                    "超分模型云下载：按设备 SoC/NPU 自动匹配对应版本（QNN HTP / CPU 自适应）",
+                    "Anime-Seg 支持多 NPU 变体，按设备自动选择下载链接",
+                    "模型页新增超分模型下载入口，与内置模型同格式",
+                    "内置模型列表按设备能力智能匹配"
+                ))
+                ChangelogRow("v1.1.1", listOf(
+                    "双版本：完整版（内置 QNN 模型）/ 精简版（云下载）",
+                    "QNN EP（骁龙 DSP）硬件加速，抠图更快更省电",
+                    "AI 重绘（Stable Diffusion）本地生成",
+                    "下载可中途停止，下载前自动检查网络连通性",
+                    "精简安装体积：不再向存储区复制重复运行库"
+                ))
+                ChangelogRow("v1.1.0", listOf(
+                    "多镜像源下载，断点续传 + 进度通知",
+                    "模型管理：导入本地 / 切换 / 删除",
+                    "历史记录与分享"
+                ))
+                ChangelogRow("v1.0.0", listOf(
+                    "RMBG 离线抠图上线",
+                    "ONNX Runtime CPU 推理，支持批量抠图"
+                ))
+            }
+        }
+
         // 技术栈
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
@@ -257,6 +298,49 @@ private fun AboutPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        // GitHub 项目（独立卡片，醒目可点击跳转）
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable {
+                    runCatching {
+                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                        i.data = android.net.Uri.parse("https://github.com/zuimengcf/rmbg-offline")
+                        context.startActivity(i)
+                    }
+                }
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF24292F)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("🐙", style = MaterialTheme.typography.titleMedium)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("GitHub 项目", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "github.com/zuimengcf/rmbg-offline",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Icon(Icons.Filled.OpenInNew, contentDescription = "打开", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
             }
         }
 
@@ -281,6 +365,21 @@ private fun AboutPage(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+    }
+}
+
+/** 更新日志的一行：版本号 + 变更列表 */
+@Composable
+private fun ChangelogRow(version: String, items: List<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(version, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        items.forEach { item ->
+            Text(
+                "· $item",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -319,15 +418,47 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var downloadBytes by remember { mutableStateOf(0L) }
     var downloadTotal by remember { mutableStateOf(0L) }
     val restoredModelId = Prefs.selectedModelId
-    // ★ Lite 版模型精简：Prefs 存的模型 id 可能不在 Lite 内置列表（如 rmbg20/modnet/rmbg14_fp32），
-    //   回退到默认 anime_seg（与 normal 版默认一致：Anime-Seg，两边统一）
-    val restoredModelIdSafe = if (BuildConfig.IS_LITE &&
-        ModelManager.builtinModels.none { it.id == restoredModelId }) {
-        "anime_seg"  // 默认模型（两边统一）
-    } else restoredModelId
+    // ★ 设备能力自动识别（QNN/CPU + 锁定型号）：
+    //   1) 检测当前设备 SoC 型号（骁龙？）与 QNN 支持（libcdsprpc 存在？）
+    //   2) 若 QNN 可用且存在匹配当前型号的 QNN 模型 → 自动选中该 QNN 模型（如 8gen2 → qnn_animeseg）；
+    //      否则回退 CPU 模型（anime_seg）
+    //   3) 用户手动选择过的模型仍优先（Prefs 非空且存在时尊重手动选择）
+    // ★ 旧版升级兼容：Prefs 存的旧默认值 anime_seg 会被当成"用户选择"→ 额外判断：
+    //   若当前设备支持 QNN 且 Prefs 存的模型是 CPU 模型（anime_seg 等），则按设备能力自动升级到 QNN 模型
+    val autoModelId = ModelManager.autoPickDefaultModel(context)
+    val restoredModelIdSafe = run {
+        val stored = ModelManager.builtinModels.find { it.id == restoredModelId }
+        val userChosen = restoredModelId.isNotEmpty() &&
+            stored != null &&
+            ModelManager.qnnModelMatchesDevice(stored)
+        if (userChosen) {
+            // ★ 旧版遗留：用户没真正手动选过（存的是旧默认 anime_seg 之类 CPU 模型），
+            //   且设备支持 QNN → 自动升级到 QNN 模型，让 8gen2 默认用 QNN
+            if (stored!!.isQnn || !ModelManager.isQnnSupported(context)) {
+                restoredModelId
+            } else {
+                Prefs.selectedModelId = autoModelId   // 写回 Prefs，之后尊重此选择
+                autoModelId
+            }
+        } else {
+            Prefs.selectedModelId = autoModelId   // ★ 写回 Prefs，之后重启尊重此选择
+            autoModelId
+        }
+    }
     ModelManager.selectedModelId = restoredModelIdSafe
     var modelReady by remember { mutableStateOf(ModelManager.isModelDownloaded()) }
-    var statusText by remember { mutableStateOf(if (modelReady) "模型已就绪，选择图片开始抠图" else "需要下载模型（约176MB）") }
+    // ★ 默认状态文案：按当前选中模型动态生成（QNN 模型=部署，CPU 模型=下载，体积取真实值）
+    val initialStatus = if (modelReady) {
+        "模型已就绪，选择图片开始抠图"
+    } else {
+        val curBm = ModelManager.builtinModels.find { it.id == restoredModelIdSafe }
+        if (curBm?.isQnn == true) {
+            "需要部署 ${curBm.name}（约${curBm.sizeBytes / 1024 / 1024}MB，点击部署）"
+        } else {
+            "需要下载模型（约${(curBm?.sizeBytes ?: 176_153_355L) / 1024 / 1024}MB）"
+        }
+    }
+    var statusText by remember { mutableStateOf(initialStatus) }
     // ★ 最近一次抠图/选区处理的耗时（毫秒），用于常驻显示
     var lastElapsedMs by remember { mutableStateOf<Long?>(null) }
     // ★ 处理中的实时秒数（每秒跳动，完成时记录最终值）
@@ -374,9 +505,16 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var storageReport by remember { mutableStateOf("") }
     var storageChecking by remember { mutableStateOf(false) }
 
-    // ---- 设置：ONNX 加速（从 Prefs 恢复）----
+    // ---- 设置：ONNX 加速（从 Prefs 恢复 + 设备能力自动识别）----
     var enableNnapi by remember { mutableStateOf(Prefs.enableNnapi) }
-    var enableQnn by remember { mutableStateOf(Prefs.enableQnn || (ModelManager.builtinModels.find { it.isQnn }?.id == restoredModelIdSafe)) }
+    // ★ QNN 自动识别：设备支持 QNN（骁龙 + libcdsprpc）且选中模型匹配当前型号 → 自动开启；
+    //   用户手动开关优先（Prefs.enableQnn 非默认时尊重手动值）
+    var enableQnn by remember {
+        mutableStateOf(
+            if (Prefs.enableQnn) true   // 用户手动开过 → 保持
+            else ModelManager.shouldAutoEnableQnn(context, restoredModelIdSafe)
+        )
+    }
     var onnxThreads by remember { mutableStateOf(Prefs.onnxThreads) }
     var keepAlive by remember { mutableStateOf(Prefs.keepAlive) }
     // ★ 自动保存抠图结果开关（默认开；勾选后首次抠图即自动保存 原图→结果 到历史/相册）
@@ -434,7 +572,6 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var postDecontaminate by remember { mutableStateOf(0f) }   // 去色边强度 0~1
     var postFeather by remember { mutableStateOf(0) }          // 柔化半径 0~8
     var postShrink by remember { mutableStateOf(0) }           // 收缩 px（-20~20，负=扩展）
-    var postHarden by remember { mutableStateOf(false) }        // ★ 背景硬化（后处理选项）：半透明残影设全透明
     // ★ 画笔手动扣空/恢复（后处理面板内，直接改 viewerBitmap 像素，GPU drawPath 高性能）
     var postBrushMode by remember { mutableStateOf(false) }    // 画笔模式开关
     var postBrushEraser by remember { mutableStateOf(true) }   // true=扣空(清alpha) false=恢复(填alpha+原图色)
@@ -446,6 +583,11 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     // ★ 查看器拆分方案A：独立全屏"后处理/画笔"编辑页（从查看器拆出的新窗口）
     var showPostProcessScreen by remember { mutableStateOf(false) }
     var postProcessResult by remember { mutableStateOf<Bitmap?>(null) }
+    // ★ 4x 超分（独立按钮，不入历史）： viewerBitmap 超分后的临时放大图
+    //   仅当前查看会话有效，可保存/分享；不写历史记录、不进撤销栈（用户要求）
+    var superResBusy by remember { mutableStateOf(false) }
+    var superResLastW by remember { mutableIntStateOf(0) }
+    var superResLastH by remember { mutableIntStateOf(0) }
     // ★ 查看器当前显示结果对应的原图（历史记录打开时加载该记录的原图副本，
     //   供后处理编辑页的"恢复画笔"从正确的原图取原背景色，避免用错主界面当前原图）
     var viewerOriginBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -461,10 +603,12 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var aiEngineStatus by remember { mutableStateOf("") }         // 引擎状态提示
     var aiEngineBusy by remember { mutableStateOf(false) }        // 部署/启动/停止进行中
     // ★ 模型是否可用（zip 已选 或 已部署）：App 重启从 Prefs 恢复；
-    //   部署成功后 zip 自动删除，此时靠 activeModelId 定位部署目录也算已选
+    //   部署成功后 zip 自动删除，此时靠 activeModelId 定位部署目录也算已选。
+    //   ★ Lite 精简版：AI 重绘固定走 LocalDream App（复用其模型），本 App 无需 SD 模型包 → 恒 true
     var aiModelZipReady by remember {
         mutableStateOf(
-            runCatching {
+            if (BuildConfig.IS_LITE) true
+            else runCatching {
                 val p = Prefs.aiModelZipPath
                 val zipOk = p.isNotEmpty() && File(p).exists() && File(p).length() >= 100_000_000L
                 if (zipOk) true
@@ -552,9 +696,68 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     fun resetPostVars() {
         showPostProcess = false
         postDecontaminate = 0f; postFeather = 0; postShrink = 0
-        postHarden = false
         postBrushMode = false; postBrushEraser = true
         postBrushVersion++
+    }
+
+    // ★★ 4x 超分（独立按钮）：超分当前查看图并替换显示。
+    //   不写历史记录、不进撤销栈（用户要求：超分图是临时的，可保存/分享但不入库）。
+    //   大图自动降采样防 OOM（SuperResEngine 内部处理），失败静默降级为原图并提示。
+    // ★ 禁止无限超分：引擎固定 输入≤512 → 输出≤2048。当前图已是超分产物（尺寸≥2048×2048，
+    //   或等于上次超分尺寸）时拒绝再次超分（重复点只会空耗 CPU + 反复降采样损画质）。
+    @Suppress("UNUSED_EXPRESSION")
+    fun doSuperRes() {
+        val cur = viewerBitmap ?: resultBitmap ?: originalBitmap ?: return
+        if (cur.isRecycled || superResBusy) return
+        // ★ 无限超分闸：当前图已是上次超分结果（尺寸匹配）或已超分上限（≥2048）→ 拒绝
+        val alreadySuper = (superResLastW == cur.width && superResLastH == cur.height && superResLastW > 0)
+        if (alreadySuper || cur.width >= 2048 || cur.height >= 2048) {
+            Toast.makeText(context, "当前图已是最佳分辨率（2048），不再叠加超分", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch {
+            superResBusy = true
+            var failMsg = ""
+            val up = withContext(Dispatchers.IO) {
+                try {
+                    val imported = com.rmbg.offline.Prefs.superResModelPath
+                    if (imported.isNotEmpty() && java.io.File(imported).exists()) {
+                        // ★ 优先用导入的超分模型（QNN EPContext 或普通 ONNX，自动检测）
+                        val eng = com.rmbg.offline.ml.SuperResEngine.loadFromFile(context, java.io.File(imported), threads = 4)
+                        try { eng.upscale4x(cur) } finally { eng.close() }
+                    } else {
+                        val model = com.rmbg.offline.ml.SuperResEngine.loadFromAssets(context, "models/realesrgan_anime6b.onnx")
+                        if (model == null) {
+                            failMsg = "模型加载失败（assets 缺失）"
+                            null
+                        } else {
+                            val eng = com.rmbg.offline.ml.SuperResEngine(threads = 4, modelBytes = model)
+                            try { eng.upscale4x(cur) } finally { eng.close() }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // ★ 记录具体失败原因（真机排查超分失败用）
+                    android.util.Log.e("RMBG-SUPER", "超分失败", e)
+                    failMsg = "超分失败：${e.message?.take(80) ?: e.javaClass.simpleName}"
+                    null
+                }
+            }
+            superResBusy = false
+            if (up != null && !up.isRecycled && up.width > 0) {
+                // ★ 不入历史：直接替换查看器显示图；记录当前尺寸用于 UI 提示 + 防重复超分
+                superResLastW = up.width; superResLastH = up.height
+                // 旧 viewerBitmap 若非历史加载，回收旧图避免泄漏（历史图不回收，它由历史栈持有）
+                val old = viewerBitmap
+                if (old != null && old !== cur && old !== up && old.isRecycled.not() && viewerItem == null) {
+                    try { old.recycle() } catch (_: Exception) {}
+                }
+                viewerBitmap = up
+                statusText = "已 4x 超分：${up.width}×${up.height}（临时图，不写入历史，可保存/分享）"
+                Toast.makeText(context, "已 4x 超分 ${up.width}×${up.height}", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, if (failMsg.isNotEmpty()) failMsg else "超分失败（模型不可用或内存不足），已保留原图", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     // ---- 停止标志（运行中可取消）----
@@ -619,7 +822,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         if (!Notifications.hasPermission(context)) {
             try { notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) } catch (_: Exception) {}
         }
-        // ★ AI 重绘模型 zip 恢复（App 重启不丢；zip 部署后可能已删，靠 activeModelId 定位）
+        // ★ AI 重绘模型 zip 恢复 + 引擎日志恢复 + 自动补全部署
+        //   ★ Lite 精简版：AI 重绘固定走 LocalDream App（复用其模型），本 App 无本地引擎/模型包，整段跳过
+        if (!BuildConfig.IS_LITE) {
         AiRedrawEngine.restoreModelZip(context)
         // ★ 引擎日志恢复（App 重启后日志 UI 仍显示上次引擎日志）
         AiRedrawEngine.restoreLogTail(context)
@@ -657,6 +862,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             AiRedrawEngine.restoreModelZip(context)
             if (AiRedrawEngine.isModelReady(context)) aiModelZipReady = true
         }
+        }
         // ★ 历史预加载：App 启动时后台预查历史列表 + 预热前 20 条缩略图缓存。
         //   produceState 在外层已声明，此处仅预热 LruCache，切到 Tab 2 时缩略图直接命中缓存、零解码。
         scope.launch(Dispatchers.IO) {
@@ -680,10 +886,12 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
         try { cached?.close() } catch (_: Exception) {}
         val selBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
-        // ★ QNN 自动加载：内置 QNN 的 onnx+bin 打包在 APK assets 内，选中/切换时自动部署
-        //   （ensureQnnContext 内部按大小比对，不一致时自动覆盖旧文件）
+        // ★ QNN 自动加载：与主界面 LaunchedEffect 一致，统一走【双轨】ensureQnnContextDual
+        //   （assets 兜底优先，缺失/损坏时自动走 HF 仓库下载，兼容 zip 交付的多-新模型）。
+        //   此前用旧单轨 ensureQnnContext（仅 assets），对 zip/HF 交付模型（无 assetOnnx/assetBin）
+        //   返回 false → load 时 QNN 不可用抛异常 → 区域抠图报"模型未加载"，此处已对齐修复。
         if (selBm?.isQnn == true) {
-            runBlocking { withContext(Dispatchers.IO) { ModelManager.ensureQnnContext(context, selBm.id) } }
+            runBlocking { withContext(Dispatchers.IO) { ModelManager.ensureQnnContextDual(context, selBm.id) } }
         }
         val e = com.rmbg.offline.ml.RmbgOnnxEngine(
             target,
@@ -757,8 +965,10 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     }
 
     // ---- 本地模型导入（SAF 选 .onnx）----
+    // ★ GetContent() 而非 OpenDocument()：前者是"分享式 Picker"，侧边栏会列出第三方文件管理器
+    //   （MT 管理器等实现了 ACTION_GET_CONTENT 接收方），方便在 SAF 里进入 MT 选模型包。
     val importModelLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         val displayName = try {
@@ -808,8 +1018,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     }
 
     // ---- 本地模型 zip 导入（SAF 选 .zip：onnx + bin 一起打包）----
+    // ★ GetContent() 同样让侧边栏列出第三方文件管理器（MT），能选中系统无法识别 MIME 的 zip
     val importZipLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         val displayName = try {
@@ -883,9 +1094,60 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
     }
 
+    // ---- 超分模型导入（SAF 选 .zip 或 .onnx）----
+    // ★ 与抠图模型隔离：走 importSuperResModelZip 存到 modelDir()/superres/ 子目录，
+    //   绝不进入抠图 localModels() 列表。CPU 超分可导入单 .onnx；QNN 超分导入 onnx+bin zip。
+    val importSuperResLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        val displayName = try {
+            context.contentResolver.query(uri, arrayOf(
+                android.provider.OpenableColumns.DISPLAY_NAME
+            ), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else "super_res.zip"
+            } ?: "super_res.zip"
+        } catch (_: Exception) { "super_res.zip" }
+        Toast.makeText(context, "正在导入超分模型（onnx+bin，大文件需数秒~数十秒）...", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val tmp = File(context.cacheDir, "sr_import_${System.currentTimeMillis()}.${if (displayName.endsWith(".zip", true)) "zip" else "onnx"}")
+                        tmp.outputStream().use { out -> input.copyTo(out) }
+                        if (!tmp.exists() || tmp.length() == 0L) { tmp.delete(); null } else {
+                            if (displayName.endsWith(".zip", true)) {
+                                val path = ModelManager.importSuperResModelZip(tmp)
+                                tmp.delete()
+                                path
+                            } else {
+                                val srDir = File(ModelManager.modelDir(), "superres").apply { mkdirs() }
+                                val dest = File(srDir, "superres_model.onnx")
+                                tmp.copyTo(dest, overwrite = true)
+                                tmp.delete()
+                                if (dest.exists()) dest.absolutePath else null
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-IMPORT", "超分模型导入失败", e)
+                    null
+                }
+            }
+            if (result != null && File(result).exists()) {
+                Prefs.superResModelPath = result
+                Toast.makeText(context, "超分模型已导入（${File(result).name}）", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "超分模型导入失败：请选择包含 onnx(+bin) 的 zip 或单个 onnx", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     // ---- AI 重绘模型 zip 选择（AnythingV5_qnn2.28_8gen2.zip）----
+    // ★ GetContent() 而非 OpenDocument()：侧边栏能列出并进入第三方文件管理器（MT）
+    //   launch 传 "*/*" 显示所有文件、不按类型过滤（可在 MT 里选中系统识别不了 MIME 的 zip）
     val aiModelZipPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         // ★ 复制到 filesDir/ai_models/ 持久目录（App 重启不丢，不再用 cacheDir 临时目录）
@@ -959,22 +1221,38 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         val selBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
         if (selBm?.isQnn == true) {
             val qnnId = selBm.id
-            // ★ 下载前连通性检查：两个镜像都不可达则不浪费时间
-            val selMirror = ModelManager.mirrors[selectedMirrorIndex.coerceIn(0, ModelManager.mirrors.size - 1)]
-            val reachable = ModelManager.quickProbe(selMirror.baseUrl)
-            if (!reachable) {
-                statusText = "❌ 网络不可达（${selMirror.name}），请检查网络后重试"
-                modelReady = ModelManager.isModelDownloaded()
-                Toast.makeText(context, "当前镜像不可达，请检查网络", Toast.LENGTH_SHORT).show()
-                return
-            }
+            // ★ 不再做主线程 quickProbe 预检（Android 主线程同步网络会抛 NetworkOnMainThreadException
+            //   → 被 quickProbe 吞掉返回 false → 误报"网络不可达"）。
+            //   连通性检查交给 downloadModel/ensureQnnContextDual 内部的 IO 线程镜像循环处理，
+            //   失败会自动切换镜像并重试，错误原因通过 listener 实时回传 UI。
             // ★ 重置取消标志 + 保存工作协程
             ModelManager.resetCancel()
             downloadingJob = scope.launch {
                 isDownloading = true
                 statusText = "正在部署 ${selBm.name}（内置优先，不足时联网下载）..."
                 // 双轨：assets 内置兜底 → 缺失则走 HF 仓库下载 onnx+bin
-                val ok = ModelManager.ensureQnnContextDual(context, qnnId)
+                val ok = ModelManager.ensureQnnContextDual(
+                    context, qnnId,
+                    listener = object : ModelManager.ProgressListener {
+                        override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                            statusText = "下载中 ${selBm.name}：${bytesDownloaded / 1024 / 1024}/${totalBytes / 1024 / 1024}MB"
+                        }
+
+                        override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
+                            statusText = "正在从 $mirrorName 下载 ${selBm.name} ..."
+                        }
+
+                        override fun onMirrorError(mirrorName: String, error: String) {
+                            statusText = "$mirrorName 下载失败：$error"
+                        }
+
+                        override fun onDone(file: File) {}
+
+                        override fun onError(e: Exception) {
+                            statusText = "下载错误：${e.message ?: e.javaClass.simpleName}"
+                        }
+                    }
+                )
                 downloadingJob = null
                 isDownloading = false
                 if (ok) {
@@ -983,8 +1261,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     Toast.makeText(context, "${selBm.name} 部署完成（${selBm.sizeBytes / 1024 / 1024}MB）", Toast.LENGTH_SHORT).show()
                 } else {
                     statusText = if (ModelManager.isCancelRequested()) "下载已取消"
-                        else "${selBm.name} 部署失败，可检查网络后重试"
-                    Toast.makeText(context, if (ModelManager.isCancelRequested()) "下载已取消" else "${selBm.name} 部署失败", Toast.LENGTH_SHORT).show()
+                        else "${selBm.name} 部署失败（详见日志或设置页诊断）"
+                    Toast.makeText(context, if (ModelManager.isCancelRequested()) "下载已取消" else "${selBm.name} 部署失败，请查看状态文字", Toast.LENGTH_SHORT).show()
                 }
             }
             return
@@ -999,14 +1277,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
         ModelManager.hfRepo = modelRepo.trim().ifEmpty { "briaai/RMBG-1.4" }
         ModelManager.hfFile = modelFile.trim().ifEmpty { "onnx/model.onnx" }
-        // ★ 下载前连通性检查
-        val selMirror = ModelManager.mirrors[selectedMirrorIndex.coerceIn(0, ModelManager.mirrors.size - 1)]
-        val reachable = ModelManager.quickProbe(selMirror.baseUrl)
-        if (!reachable) {
-            statusText = "❌ 网络不可达（${selMirror.name}），请检查网络后重试"
-            Toast.makeText(context, "当前镜像不可达，请检查网络", Toast.LENGTH_SHORT).show()
-            return
-        }
+        // ★ 不再做主线程 quickProbe 预检（原因同上），交给 downloadModel 内部 IO 线程镜像循环
         // ★ 重置取消标志 + 保存工作协程
         ModelManager.resetCancel()
         downloadingJob = scope.launch {
@@ -1285,6 +1556,11 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         break
                     }
                     val bmp = current
+                    // ★ 历史分组键必须在【处理当前张之前】就更新为这张原图的 key：
+                    //   否则批量连抠时第2张起用的还是上一张的 key，导致多张结果全归入上一张分支
+                    //   （历史记录数量 < 实际抠图张数、原图分类错乱）。
+                    //   computeOriginalKey 是确定性哈希：首张重算结果与选图时一致，安全。
+                    currentHistoryKey = computeOriginalKey(bmp)
                     val t0 = System.currentTimeMillis()
                     val turbo = turboMode
                     val useTiling = !turbo && (bmp.width > 1024 || bmp.height > 1024)
@@ -1414,7 +1690,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     Scaffold(
         containerColor = Color(0xFFF5F7FA),
         bottomBar = {
-            NavigationBar(
+            // ★ 关于页等全屏覆盖层显示时隐藏底栏（避免露出底部导航）
+            if (!showAboutPage && !showEditor && !showPostProcessScreen) {
+                NavigationBar(
                 containerColor = Color(0xFFFFFFFF),
                 tonalElevation = 3.dp
             ) {
@@ -1443,6 +1721,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     label = { Text("设置") }
                 )
             }
+            } // ← 关于页等覆盖层时隐藏底栏
         }
     ) { padding ->
         // ★ 关于页：独立二级页面，覆盖整个主界面（含底部导航），返回后回到设置 Tab
@@ -1700,9 +1979,8 @@ Card(
                             Text(
                                 curBm?.name ?: curLocal?.displayName ?: "自定义模型",
                                 style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                fontWeight = FontWeight.Bold
+                                // ★ 完整显示模型名：不限制行数（本地模型长文件名也能看全）
                             )
                             Text(
                                 when {
@@ -1712,9 +1990,8 @@ Card(
                                     else -> "自定义配置 · ${modelRepo}/${modelFile}"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                // ★ 完整显示描述：不限制行数
                             )
                         }
                         Spacer(Modifier.width(4.dp))
@@ -1795,9 +2072,7 @@ Card(
                                     Text(
                                         bm.description,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 Spacer(Modifier.width(4.dp))
@@ -1903,6 +2178,11 @@ Card(
                                         enabled = !isProcessing, // ★ 运行中禁止切换模型
                                         onClick = {
                                             if (isProcessing) return@selectable
+                                            // ★ 超分模型条目不参与抠图选中（独立 Prefs 管理）
+                                            if (bm.id == "qnn_realesrgan") {
+                                                Toast.makeText(context, "超分模型：点右侧按钮下载/删除，不参与抠图选择", Toast.LENGTH_SHORT).show()
+                                                return@selectable
+                                            }
                                             selectedBuiltinId = bm.id
                                             ModelManager.selectedModelId = bm.id
                                             Prefs.selectedModelId = bm.id
@@ -1921,6 +2201,11 @@ Card(
                             ) {
                                 RadioButton(selected = selected, onClick = {
                                     if (isProcessing) return@RadioButton
+                                    // ★ 超分模型条目不参与抠图选中
+                                    if (bm.id == "qnn_realesrgan") {
+                                        Toast.makeText(context, "超分模型：点右侧按钮下载/删除，不参与抠图选择", Toast.LENGTH_SHORT).show()
+                                        return@RadioButton
+                                    }
                                     selectedBuiltinId = bm.id
                                     ModelManager.selectedModelId = bm.id
                                     Prefs.selectedModelId = bm.id
@@ -1949,25 +2234,27 @@ Card(
                                     Text(
                                         bm.description,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 Spacer(Modifier.width(4.dp))
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (bmReady) {
-                                        Text("✅ 已部署", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                        Text(if (bm.id == "qnn_realesrgan") "✅ 已就绪" else "✅ 已部署", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                                     } else {
-                                        Text("未部署", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                        Text(if (bm.id == "qnn_realesrgan") "未下载" else "未部署", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
                                     }
                                     if (bmReady) {
-                                        // 已部署 → 删除按钮（释放模型目录空间）
+                                        // 已部署 → 删除按钮（释放模型目录空间；超分同时清 Prefs）
                                         IconButton(
                                             onClick = {
                                                 ModelManager.deleteBuiltinModel(bm)
                                                 builtinModelsVersion++ // ★ 刷新内置模型下载状态
-                                                if (selectedBuiltinId == bm.id) {
+                                                if (bm.id == "qnn_realesrgan") {
+                                                    Prefs.superResModelPath = ""
+                                                    statusText = "超分模型已删除，超分回退内置 CPU 模型"
+                                                    Toast.makeText(context, "超分模型已删除", Toast.LENGTH_SHORT).show()
+                                                } else if (selectedBuiltinId == bm.id) {
                                                     modelReady = false
                                                     statusText = "模型已删除，可重新部署"
                                                     try { engine?.close() } catch (_: Exception) {}
@@ -1981,9 +2268,70 @@ Card(
                                             Icon(Icons.Filled.Delete, contentDescription = "删除 ${bm.name}", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                                         }
                                     } else {
-                                        // 未部署 → 部署按钮（从 assets 拷贝 EPContext 产物）
+                                        // 未部署 → 部署按钮（从 assets 拷贝 EPContext 产物；超分走云下载）
                                         IconButton(
                                             onClick = {
+                                                if (bm.id == "qnn_realesrgan") {
+                                                    // ★ 超分模型：云端下载（QNN 匹配 → HF zip；否则回退 CPU 内置资产）
+                                                    scope.launch {
+                                                        downloadingId = bm.id
+                                                        statusText = "正在下载超分模型（QNN HTP / CPU 自适应）..."
+                                                        val path = ModelManager.downloadSuperResModel(
+                                                            context = context,
+                                                            listener = object : ModelManager.ProgressListener {
+                                                                override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                                                                    statusText = "超分下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB"
+                                                                }
+                                                                override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) { statusText = "正在从 $mirrorName 下载超分模型..." }
+                                                                override fun onMirrorError(mirrorName: String, error: String) { statusText = "$mirrorName 下载失败：$error" }
+                                                                override fun onDone(file: java.io.File) {}
+                                                                override fun onError(e: Exception) { statusText = "超分下载错误：${e.message}" }
+                                                            }
+                                                        )
+                                                        downloadingId = null
+                                                        if (path != null && java.io.File(path).exists()) {
+                                                            Prefs.superResModelPath = path
+                                                            builtinModelsVersion++ // ★ 刷新内置模型下载状态
+                                                            statusText = "✅ 超分模型已下载（QNN HTP 加速），超分时自动启用"
+                                                            Toast.makeText(context, "超分模型已就绪（QNN HTP）", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            // 回退 CPU：内置 assets 已就绪，免下载
+                                                            Prefs.superResModelPath = ""
+                                                            builtinModelsVersion++
+                                                            statusText = "当前设备自动使用内置 CPU 超分（免下载），超分时自动启用"
+                                                            Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                    return@IconButton
+                                                }
+                                                if (bm.id == "qnn_animeseg") {
+                                                    // ★ Anime-Seg：按设备 SoC 自动匹配对应 NPU 编译产物（sm8350~8850 → HF zip；sm8550 → 内置 v73）
+                                                    scope.launch {
+                                                        downloadingId = bm.id
+                                                        statusText = "正在部署 Anime-Seg（按设备 NPU 自动匹配）..."
+                                                        val ok = ModelManager.downloadAnimeSeg(
+                                                            context = context,
+                                                            listener = object : ModelManager.ProgressListener {
+                                                                override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                                                                    statusText = "Anime-Seg 下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB"
+                                                                }
+                                                                override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) { statusText = "正在从 $mirrorName 下载 Anime-Seg..." }
+                                                                override fun onMirrorError(mirrorName: String, error: String) { statusText = "$mirrorName 下载失败：$error" }
+                                                                override fun onDone(file: java.io.File) {}
+                                                                override fun onError(e: Exception) { statusText = "Anime-Seg 下载错误：${e.message}" }
+                                                            }
+                                                        )
+                                                        downloadingId = null
+                                                        if (ok) {
+                                                            modelReady = ModelManager.isModelDownloaded()
+                                                            builtinModelsVersion++ // ★ 刷新内置模型下载状态
+                                                            statusText = "${bm.name} 已部署（按设备 NPU 匹配），选择图片开始抠图"
+                                                        } else {
+                                                            statusText = "${bm.name} 部署失败（设备无对应 NPU 变体或网络异常）"
+                                                        }
+                                                    }
+                                                    return@IconButton
+                                                }
                                                 selectedBuiltinId = bm.id
                                                 ModelManager.selectedModelId = bm.id
                                                 Prefs.selectedModelId = bm.id
@@ -2040,20 +2388,44 @@ Card(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Button(
-                        onClick = { importModelLauncher.launch(arrayOf("application/octet-stream", "application/x-onnx", "*/*")) },
+                        onClick = { importModelLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("导入本地 .onnx 模型")
                     }
                     OutlinedButton(
-                        onClick = { importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        onClick = { importZipLauncher.launch("*/*") },
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Filled.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("导入 zip（onnx + bin）")
+                    }
+                    // ★ 超分模型导入：独立入口，走 importSuperResModelZip 存 superres/ 目录，绝不混入抠图列表
+                    OutlinedButton(
+                        onClick = { importSuperResLauncher.launch("*/*") },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导入超分模型")
+                    }
+                    // ★ 当前已导入的超分模型状态
+                    val curSrPath = com.rmbg.offline.Prefs.superResModelPath
+                    if (curSrPath.isNotEmpty() && File(curSrPath).exists()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF4FC3F7))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "超分模型: ${File(curSrPath).name}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF4FC3F7),
+                                maxLines = 1
+                            )
+                        }
                     }
                     // 已导入的本地模型列表（绑定版本号：导入/删除后响应式刷新；复用 Tab 1 顶部缓存，避免重复扫描磁盘）
                     val locals = localModelCache
@@ -2226,6 +2598,54 @@ Card(
                         Text("下载源（镜像）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(4.dp))
+                    // ★ 自动选择（国内/国外按可达性探测，默认推荐）
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (selectedMirrorIndex < 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                else Color.Transparent
+                            )
+                            .selectable(
+                                selected = selectedMirrorIndex < 0,
+                                onClick = {
+                                    if (!isDownloading) {
+                                        selectedMirrorIndex = -1
+                                        ModelManager.selectedMirrorIndex = -1
+                                        ModelManager.invalidateAutoMirror()
+                                        Prefs.mirrorIndex = -1
+                                    }
+                                }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedMirrorIndex < 0,
+                            onClick = {
+                                if (!isDownloading) {
+                                    selectedMirrorIndex = -1
+                                    ModelManager.selectedMirrorIndex = -1
+                                    ModelManager.invalidateAutoMirror()
+                                    Prefs.mirrorIndex = -1
+                                }
+                            },
+                            enabled = !isDownloading
+                        )
+                        Column(Modifier.padding(start = 6.dp)) {
+                            Text(
+                                "自动选择",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (selectedMirrorIndex < 0) FontWeight.Bold else FontWeight.Normal
+                            )
+                            Text(
+                                "国内/国外自动探测最优源（默认推荐）",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     ModelManager.mirrors.forEachIndexed { index, mirror ->
                         Row(
                             modifier = Modifier
@@ -2241,6 +2661,7 @@ Card(
                                         if (!isDownloading) {
                                             selectedMirrorIndex = index
                                             ModelManager.selectedMirrorIndex = index
+                                            ModelManager.invalidateAutoMirror()
                                             Prefs.mirrorIndex = index
                                         }
                                     }
@@ -2254,6 +2675,7 @@ Card(
                                     if (!isDownloading) {
                                         selectedMirrorIndex = index
                                         ModelManager.selectedMirrorIndex = index
+                                        ModelManager.invalidateAutoMirror()
                                         Prefs.mirrorIndex = index
                                     }
                                 },
@@ -2394,6 +2816,9 @@ Card(
             }
 
             // ===== SD 模型（AI 重绘引擎）=====
+            // ★ Lite 精简版：AI 重绘固定走 LocalDream App（复用其模型），无本地引擎/模型包，
+            //   整张卡片隐藏（不显示 SD 模型包导入/部署入口）
+            if (!BuildConfig.IS_LITE) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
                 shape = RoundedCornerShape(16.dp)
@@ -2414,13 +2839,13 @@ Card(
                     }
                     Text(
                         if (aiEngineStatus.isNotEmpty()) aiEngineStatus
-                        else "选 AnythingV5 QNN 模型包 zip。重绘时自动部署启动，用完全自动停止。",
+                        else "选择 SD 模型包 zip（animemix / AnythingV5 / MeinaMix 等）。重绘时自动部署启动，用完后自动停止。",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (aiEngineStatus.contains("失败") || aiEngineStatus.contains("❌") || aiEngineStatus.contains("超时") || aiEngineStatus.contains("退出") || aiEngineStatus.contains("不存在") || aiEngineStatus.contains("缺失")) Color(0xFFC62828) else if (aiEngineStatus.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32)
                     )
                     // 选包按钮（全宽，唯一手动操作）
                     OutlinedButton(
-                        onClick = { aiModelZipPicker.launch(arrayOf("application/zip")) },
+                        onClick = { aiModelZipPicker.launch("*/*") },
                         enabled = !aiEngineBusy && !aiRedrawDownloading,
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                         shape = RoundedCornerShape(10.dp)
@@ -2437,6 +2862,56 @@ Card(
                             } else "选择 SD 模型包 zip",
                             fontSize = 14.sp, maxLines = 1
                         )
+                    }
+                    // ★ 云端一键下载 animemix（HF 云下载入口）：点击即从 Prefs.aiRedrawHfUrl 拉取并自动部署激活
+                    //   复用 downloadModelUrl() 完整链路（下载→probeZipKind→deployModel→已部署列表刷新）
+                    OutlinedButton(
+                        onClick = {
+                            if (aiRedrawDownloading) return@OutlinedButton
+                            // 预填云下载直链（animemix 默认直链），未配置时写入 Prefs 持久化
+                            val url = Prefs.aiRedrawHfUrl.ifBlank {
+                                "https://huggingface.co/zuimengqm/sd1.5-qnn/resolve/main/animemix.zip"
+                            }
+                            Prefs.aiRedrawHfUrl = url
+                            modelUrlInput = url
+                            downloadModelUrl()
+                        },
+                        enabled = !aiEngineBusy && !aiRedrawDownloading,
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF1565C0))
+                    ) {
+                        if (aiRedrawDownloading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = Color(0xFF1565C0)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "下载中 ${if (aiRedrawDlTotal > 0) "${(aiRedrawDlProgress * 100 / aiRedrawDlTotal)}%" else ""}",
+                                fontSize = 14.sp, maxLines = 1
+                            )
+                        } else {
+                            Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("云端下载 animemix 模型（约 1.2GB）", fontSize = 14.sp)
+                        }
+                    }
+                    if (aiRedrawDownloading && aiRedrawDlTotal > 0) {
+                        LinearProgressIndicator(
+                            progress = { (aiRedrawDlProgress.toFloat() / aiRedrawDlTotal.toFloat()).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                            color = Color(0xFF1565C0),
+                            trackColor = Color(0xFF1565C0).copy(alpha = 0.15f)
+                        )
+                        if (aiRedrawDlSpeed > 0) {
+                            Text(
+                                "速度 ${formatSpeed(aiRedrawDlSpeed)} / ${formatSize(aiRedrawDlProgress)} / ${formatSize(aiRedrawDlTotal)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     // ★ 已部署模型列表（多模型切换：zip 部署后自动删除，但解压目录保留，可随时切回/删除）
                     //   复用 Tab 1 顶部缓存，避免每次重组 listFiles 扫 1GB+ 目录卡顿
@@ -2459,7 +2934,7 @@ Card(
                                         }
                                     },
                                     enabled = !aiEngineBusy && !aiRedrawDownloading,
-                                    modifier = Modifier.weight(1f).height(40.dp),
+                                    modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(
                                         contentColor = if (isCurrent) Color(0xFF2E7D32) else Color(0xFF7B1FA2),
@@ -2472,7 +2947,8 @@ Card(
                                         tint = if (isCurrent) Color(0xFF2E7D32) else Color(0xFF7B1FA2)
                                     )
                                     Spacer(Modifier.width(6.dp))
-                                    Text(if (isCurrent) "$id（当前）" else id, fontSize = 13.sp, maxLines = 1)
+                                    // ★ 完整显示模型名：不限制行数，超长文件名可自动换行（否则 maxLines=1 截断看不见）
+                                    Text(if (isCurrent) "$id（当前）" else id, fontSize = 13.sp)
                                 }
                                 // ★ 删除该已部署模型（释放约 1GB 空间；删当前模型则清空状态）
                                 //   样式与抠图模型删除一致：IconButton 红色垃圾桶
@@ -2509,6 +2985,7 @@ Card(
                     }
                 }
             }
+            } // ★ Lite 精简版：SD 模型卡片结束
 
             } // ---- Tab 1 结束 ----
 
@@ -2880,21 +3357,26 @@ Card(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     // ---- 推理后端选择（本地自加载引擎 / LocalDream App）----
+                    // ★ Lite 精简版：未打包本地引擎资产，固定走 LocalDream，不显示本地引擎选项
                     Text("推理后端", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!BuildConfig.IS_LITE) {
+                            FilterChip(
+                                selected = aiRedrawBackend == "local",
+                                onClick = { aiRedrawBackend = "local"; Prefs.aiRedrawBackend = "local" },
+                                label = { Text("本地自加载引擎", style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
                         FilterChip(
-                            selected = aiRedrawBackend == "local",
-                            onClick = { aiRedrawBackend = "local"; Prefs.aiRedrawBackend = "local" },
-                            label = { Text("本地自加载引擎", style = MaterialTheme.typography.labelSmall) }
-                        )
-                        FilterChip(
-                            selected = aiRedrawBackend == "dream",
+                            selected = if (BuildConfig.IS_LITE) true else aiRedrawBackend == "dream",
                             onClick = { aiRedrawBackend = "dream"; Prefs.aiRedrawBackend = "dream" },
                             label = { Text("LocalDream App", style = MaterialTheme.typography.labelSmall) }
                         )
                     }
                     Text(
-                        if (aiRedrawBackend == "local")
+                        if (BuildConfig.IS_LITE)
+                            "精简版固定复用已安装的 LocalDream App（需先在 LocalDream 内就绪，App 不自部署模型）。"
+                        else if (aiRedrawBackend == "local")
                             "本 App 内启动 Stable Diffusion 引擎（需已选 SD 模型包，用完全自动停止）。"
                         else
                             "复用已安装的 LocalDream App（需先在 LocalDream 内就绪，本 App 不再自部署模型）。",
@@ -3365,13 +3847,15 @@ Card(
                                         val expanded = !collapsed
                                         val latest = items.maxByOrNull { it.timestamp } ?: return@forEach
                                         // ★ 异步缩略图（IO 线程解码，避免组合期同步解码卡 UI）
+                                        //   ★ 网格组卡片展示【原图】缩略图（同一原图分组入口，让历史列表能看到原图）
                                         val thumb = remember(latest.id) { mutableStateOf<Bitmap?>(null) }
                                         LaunchedEffect(latest.id) {
-                                            thumb.value = withContext(Dispatchers.IO) { HistoryManager.loadThumb(context, latest) }
+                                            thumb.value = withContext(Dispatchers.IO) { HistoryManager.loadOriginThumb(context, latest) }
                                         }
                                         Column(
                                             modifier = Modifier
-                                                .weight(1f)
+                                                // ★ 末行单张卡片：保持半宽靠左（fillMaxWidth(0.5f)），避免占满整行变"单列很大"
+                                                .then(if (rowGroups.size == 1) Modifier.fillMaxWidth(0.5f) else Modifier.weight(1f))
                                                 .clip(RoundedCornerShape(12.dp))
                                                 .background(
                                                     if (expanded) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
@@ -3500,9 +3984,10 @@ Card(
                                 val expanded = !collapsed
                                 val latest = items.maxByOrNull { it.timestamp } ?: return@forEach
                                 // ★ 异步缩略图（IO 线程解码，避免组合期同步解码卡 UI）
+                                //   ★ 组头展示【原图】缩略图（同一原图分组入口，让历史列表能看到原图）
                                 val thumb = remember(latest.id) { mutableStateOf<Bitmap?>(null) }
                                 LaunchedEffect(latest.id) {
-                                    thumb.value = withContext(Dispatchers.IO) { HistoryManager.loadThumb(context, latest) }
+                                    thumb.value = withContext(Dispatchers.IO) { HistoryManager.loadOriginThumb(context, latest) }
                                 }
                                 // ---- 组头（折叠条）----
                                 Row(
@@ -4133,7 +4618,8 @@ Card(
                 original = originalBitmap!!,
                 threshold = threshold,
                 currentResult = if (editorOnOriginal) null else resultBitmap,
-                engine = try { RmbgScreenState.engine ?: getEngine() } catch (_: Exception) { null },
+                // ★ 修复③：改传 lambda 而非预求值，在按钮点击协程里后台懒加载引擎
+                getEngine = { try { RmbgScreenState.engine ?: getEngine() } catch (_: Exception) { null } },
                 onApply = { newRes ->
                     if (!newRes.isRecycled) {
                         pushUndo(if (editorOnOriginal) originalBitmap else resultBitmap)
@@ -4149,7 +4635,8 @@ Card(
                 // ★ AI 区域重绘：与"局部重抠"并列，共用同一套选区/画布（AreaSelectScreen 内部实现）
                 onRedrawRegion = { src, sel ->
                     // ★ 后端就绪（本地引擎未启动则启动；LocalDream 在线则直接用）
-                    val backend = Prefs.aiRedrawBackend
+                    // ★ Lite 精简版：未打包本地引擎资产（qnnlibs/sd_core），强制走 LocalDream
+                    val backend = if (BuildConfig.IS_LITE) "dream" else Prefs.aiRedrawBackend
                     if (backend == "dream") {
                         if (!LocalDreamClient.checkOnline()) {
                             throw RuntimeException("未检测到 LocalDream App 的 8081 服务，请先在 LocalDream 中完成加载")
@@ -4170,7 +4657,10 @@ Card(
                                 deployedModelsVersion++  // ★ 部署完成刷新已部署模型列表
                             }
                             AiRedrawEngine.deployRuntime(context)
-                            val started = AiRedrawEngine.start(context, 512, 512)
+                            // ★ 修复④：用用户设置的档位启动引擎（旧版硬编码 512×512，与实际请求档位不匹配时 QNN 报错）
+                            val vw = Prefs.aiRedrawWidth.coerceIn(512, 1024)
+                            val vh = Prefs.aiRedrawHeight.coerceIn(512, 1024)
+                            val started = AiRedrawEngine.start(context, vw, vh)
                             if (!started) throw RuntimeException("AI 引擎启动失败: ${AiRedrawEngine.status}")
                         }
                     }
@@ -4328,6 +4818,37 @@ Card(
     }
     val viewer = viewerItem
     val showViewer = viewer != null || showOriginalViewer
+    // ★★ 系统返回键兼容：按覆盖层优先级逐级返回（后进先出）
+    //   关于页 → 后处理编辑 → 查看器 → 快捷切模型弹窗 → 高级编辑/画笔 → 内置模型选择
+    BackHandler(enabled = true) {
+        when {
+            showAboutPage -> showAboutPage = false
+
+            showPostProcessScreen -> {
+                showPostProcessScreen = false
+                postProcessResult = null
+                postProcessHistoryItem = null
+            }
+
+            showViewer -> {
+                viewerItem = null; viewerBitmap = null; showOriginalViewer = false
+                viewerBgOrigin = null; viewerBgStrength = 0
+                viewerOriginBitmap = null; postProcessHistoryItem = null
+                resetPostVars()
+            }
+
+            showQuickModelPicker -> {
+                showQuickModelPicker = false; quickModelSwitching = false
+            }
+
+            showEditor -> {
+                if (showBrushFromArea) showBrushFromArea = false
+                else showEditor = false
+            }
+
+            showBuiltinPicker -> showBuiltinPicker = false
+        }
+    }
     if (showViewer) {
         val bmp0 = viewerBitmap
         // ★ HARDWARE bitmap 防御（对齐 Kortex LaMa 做法）：相册/相机返回的高性能位图(HARDWARE config)，
@@ -4350,10 +4871,15 @@ Card(
                 // ★ 优先用引擎未硬化副本（保留半透明边缘 alpha，后处理去色边/柔化才能真正生效）。
                 //   lastSoftResult 与 bmp 同尺寸时取它；否则退回当前 bmp 像素。
                 val soft = try { getEngine().lastSoftResult } catch (_: Exception) { null }
-                val src = if (soft != null && soft.width == bmp.width && soft.height == bmp.height) soft else bmp
-                val px = IntArray(src.width * src.height)
-                src.getPixels(px, 0, src.width, 0, 0, src.width, src.height)
-                viewerBgOrigin = px
+                // ★ 崩溃修复：lastSoftResult 可能已被 recycle()（上次抠图/区域操作后释放但引用未置 null），
+                //   getPixels 前必须校验 isRecycled，否则抛 "Can't call getPixels() on a recycled bitmap"。
+                val src = if (soft != null && !soft.isRecycled &&
+                    soft.width == bmp.width && soft.height == bmp.height) soft else bmp
+                if (src.isRecycled) { viewerBgOrigin = null } else {
+                    val px = IntArray(src.width * src.height)
+                    src.getPixels(px, 0, src.width, 0, 0, src.width, src.height)
+                    viewerBgOrigin = px
+                }
             }
         }
         val viewerTitle = when {
@@ -4560,8 +5086,8 @@ Card(
                     }
                     // 操作：按来源显示不同入口
                     if (isHistory || isResult) {
-                        // ★ 后处理/画笔 + AI 重绘（两按钮并排，不挤）
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // ★ 后处理/画笔 + 4x超分 + AI 重绘（三按钮并排）
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(
                                 onClick = {
                                     val pp = viewerBitmap ?: return@OutlinedButton
@@ -4576,11 +5102,27 @@ Card(
                                 },
                                 enabled = bmp != null,
                                 modifier = Modifier.weight(1f).height(40.dp),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                             ) {
-                                Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("后处理 / 画笔", fontSize = 13.sp)
+                                Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("编辑", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                            }
+                            // ★★ 4x 超分（独立按钮，不入历史；可保存/分享）
+                            OutlinedButton(
+                                onClick = { doSuperRes() },
+                                enabled = bmp != null && !superResBusy && !isProcessing &&
+                                    !(superResLastW == bmp.width && superResLastH == bmp.height && superResLastW > 0) &&
+                                    bmp.width < 2048 && bmp.height < 2048,
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8F00))
+                            ) {
+                                Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
+                                Spacer(Modifier.width(3.dp))
+                                Text(if (superResBusy) "超分中…" else "4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                             }
                             // ★ AI 重绘入口：一键执行（参数用设置页预设）。无模型包则先弹选择器；有/已部署则直接触发
                             OutlinedButton(
@@ -4591,7 +5133,7 @@ Card(
                                     // ★ 模型可用性：zip 在 或 已部署（zip 部署后自动删除）都算有模型
                                     if (!AiRedrawEngine.isModelReady(context)) {
                                         Toast.makeText(context, "请先选择 SD 模型包 zip", Toast.LENGTH_SHORT).show()
-                                        aiModelZipPicker.launch(arrayOf("application/zip"))
+                                        aiModelZipPicker.launch("*/*")
                                         return@OutlinedButton
                                     }
                                     // ★ 整图一键重绘（执行块负责部署/启动/重绘/停止）
@@ -4600,13 +5142,14 @@ Card(
                                 enabled = bmp != null && !aiEngineBusy && !aiRedrawRunning,
                                 modifier = Modifier.weight(1f).height(40.dp),
                                 shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7B1FA2))
                             ) {
-                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF7B1FA2))
-                                Spacer(Modifier.width(4.dp))
+                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
+                                Spacer(Modifier.width(3.dp))
                                 Text(
                                     if (aiRedrawRunning) "重绘中..." else "AI 重绘",
-                                    fontSize = 13.sp, color = Color(0xFF7B1FA2)
+                                    fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false
                                 )
                             }
                         }
@@ -4680,7 +5223,7 @@ Card(
                             }
                         }
                         // 第一行：再次抠图 + 保存相册（各半宽）
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = {
                                     val b = viewerBitmap ?: if (isHistory) HistoryManager.loadResult(context, viewer!!) else null
@@ -4700,30 +5243,39 @@ Card(
                                         Toast.makeText(context, "已载入，可再次抠图", Toast.LENGTH_SHORT).show()
                                     }
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 enabled = bmp != null
                             ) {
-                                Text("再次抠图", fontSize = 14.sp)
+                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("再次抠图", fontSize = 13.sp)
                             }
                             OutlinedButton(
                                 onClick = { saveViewerToAlbum(context, bmp) },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 enabled = bmp != null
                             ) {
-                                Text("保存相册", fontSize = 14.sp)
+                                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("保存相册", fontSize = 13.sp)
                             }
                         }
                         // 第二行：另存为 + 分享（整行各半）
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = {
                                     val b = viewerBitmap ?: return@OutlinedButton
                                     viewerSaveLauncher.launch("rmbg_${System.currentTimeMillis()}.png")
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 enabled = bmp != null
                             ) {
-                                Text("另存为", fontSize = 14.sp)
+                                Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("另存为", fontSize = 13.sp)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -4734,26 +5286,48 @@ Card(
                                         shareResult(context, bmp)
                                     }
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 enabled = bmp != null
                             ) {
-                                Text("分享", fontSize = 14.sp)
+                                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("分享", fontSize = 13.sp)
                             }
                         }
                     } else {
-                        // 原图：高级编辑 + AI 重绘 + 立即抠图 + 保存
-                        // 第一行：高级编辑 + AI 重绘
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // 原图：高级编辑 + AI 重绘 + 4x超分 + 立即抠图 + 保存
+                        // 第一行：高级编辑 + 4x超分 + AI 重绘（统一 40dp 高 / 10dp 圆角 / 6dp 间距，减小内边距防文字截断）
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Button(
                                 onClick = {
                                     viewerItem = null; viewerBitmap = null; showOriginalViewer = false; viewerBgOrigin = null; viewerBgStrength = 0; viewerOriginBitmap = null; postProcessHistoryItem = null; resetPostVars()
                                     editorOnOriginal = true
                                     showEditor = true
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 enabled = bmp != null && originalBitmap != null
                             ) {
-                                Text("高级编辑", fontSize = 14.sp)
+                                Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("高级编辑", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                            }
+                            // ★★ 4x 超分（原图查看也可用，不入历史；已超分/超分中禁用防无限超分）
+                            OutlinedButton(
+                                onClick = { doSuperRes() },
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                enabled = bmp != null && !superResBusy && !isProcessing &&
+                                    !(superResLastW == bmp.width && superResLastH == bmp.height && superResLastW > 0) &&
+                                    bmp.width < 2048 && bmp.height < 2048,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8F00))
+                            ) {
+                                Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
+                                Spacer(Modifier.width(3.dp))
+                                Text(if (superResBusy) "超分中…" else "4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                             }
                             // ★ AI 重绘（原图）：一键执行（参数用设置页预设）。无模型包弹选择器；有/已部署则直接触发
                             OutlinedButton(
@@ -4762,49 +5336,63 @@ Card(
                                     // ★ 模型可用性：zip 在 或 已部署（zip 部署后自动删除）都算有模型
                                     if (!AiRedrawEngine.isModelReady(context)) {
                                         Toast.makeText(context, "请先选择 SD 模型包 zip", Toast.LENGTH_SHORT).show()
-                                        aiModelZipPicker.launch(arrayOf("application/zip"))
+                                        aiModelZipPicker.launch("*/*")
                                         return@OutlinedButton
                                     }
                                     // 有包/已部署 → 直接触发一键重绘（执行块负责部署/启动/重绘/停止）
                                     aiRedrawRequestId++
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 enabled = bmp != null && !aiEngineBusy && !aiRedrawRunning,
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7B1FA2))
                             ) {
-                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF7B1FA2))
-                                Spacer(Modifier.width(4.dp))
-                                Text(if (aiRedrawRunning) "重绘中..." else "AI 重绘", fontSize = 14.sp, color = Color(0xFF7B1FA2))
+                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
+                                Spacer(Modifier.width(3.dp))
+                                Text(if (aiRedrawRunning) "重绘中..." else "AI 重绘", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
                             }
                         }
-                        // 第二行：立即抠图 + 保存相册 + 另存为
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // 第二行：立即抠图 + 保存相册 + 另存为（统一 40dp 高 / 10dp 圆角 / 6dp 间距，减小内边距防文字截断）
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(
                                 onClick = {
                                     viewerItem = null; viewerBitmap = null; showOriginalViewer = false; viewerBgOrigin = null; viewerBgStrength = 0; viewerOriginBitmap = null; postProcessHistoryItem = null; resetPostVars()
                                     runRmbg()
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 enabled = bmp != null && originalBitmap != null && !isProcessing
                             ) {
-                                Text("立即抠图", fontSize = 14.sp)
+                                Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("立即抠图", fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                             OutlinedButton(
                                 onClick = { saveViewerToAlbum(context, bmp) },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 enabled = bmp != null
                             ) {
-                                Text("保存相册", fontSize = 14.sp)
+                                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("保存相册", fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                             OutlinedButton(
                                 onClick = {
                                     val b = viewerBitmap ?: return@OutlinedButton
                                     viewerSaveLauncher.launch("rmbg_${System.currentTimeMillis()}.png")
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 enabled = bmp != null
                             ) {
-                                Text("另存为", fontSize = 14.sp)
+                                Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text("另存为", fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -4945,9 +5533,10 @@ Card(
         withContext(Dispatchers.IO) {
             try {
                 // ★ 推理后端分支：
-                //   "local" = 本地自加载引擎（AiRedrawEngine 启动进程）
+                //   "local" = 本地自加载引擎（AiRedrawEngine 启动进程）【仅完整版 normal】
                 //   "dream" = 已安装的 LocalDream App（复用其 8081，不部署模型）
-                val backend = Prefs.aiRedrawBackend
+                // ★ Lite 精简版：未打包本地引擎资产（qnnlibs/sd_core），强制走 LocalDream
+                val backend = if (BuildConfig.IS_LITE) "dream" else Prefs.aiRedrawBackend
                 if (backend == "dream") {
                     // ---- LocalDream App 后端：直接调其 8081，不启动本地引擎 ----
                     if (!LocalDreamClient.checkOnline()) {
@@ -5014,9 +5603,9 @@ Card(
             } finally {
                 // ★ 重绘完成后不立即停引擎（可能有第二次重绘）：
                 //   取消旧延迟停止 Job，启动新的空闲超时 Job（默认 60s 无新重绘才停）。
-                //   LocalDream 后端不动它的进程。
+                //   LocalDream 后端不动它的进程；Lite 精简版只用 LocalDream，无本地引擎可停。
                 aiEngineStopJob?.cancel()
-                if (Prefs.aiRedrawBackend != "dream") {
+                if (!BuildConfig.IS_LITE && Prefs.aiRedrawBackend != "dream") {
                     aiEngineStopJob = scope.launch {
                         try {
                             delay(AI_REDRAW_IDLE_STOP_MS)
@@ -5158,6 +5747,14 @@ suspend fun aiRedrawRegion(src: Bitmap, sel: FloatArray): Bitmap? {
     val pH = Prefs.aiRedrawHeight
     val (normW, normH) = if (pW to pH in VALID_RES) pW to pH else 512 to 512
     // 3. 选区 contain 等比缩放放到档位，四周填特殊色（不裁剪，合并时该色转透明露出原图）
+    // ★ 修复④：记录 contain 缩放的内容偏移（contentX/Y/W/H），贴回前裁出有效内容区再等比缩放，
+    //   避免整张 normW×normH（含透明边）被 createScaledBitmap 非等比拉伸到 patchW×patchH 导致变形。
+    val regW = region.width; val regH = region.height
+    val containScale = minOf(normW.toFloat() / regW, normH.toFloat() / regH)
+    val contentW = (regW * containScale).toInt().coerceAtLeast(1)
+    val contentH = (regH * containScale).toInt().coerceAtLeast(1)
+    val contentX = (normW - contentW) / 2
+    val contentY = (normH - contentH) / 2
     val scaled = scaleToContainKey(region, normW, normH, AI_REDRAW_FILL_COLOR)
     val imgB64 = try {
         LocalDreamClient.bitmapToPngBase64(scaled)
@@ -5185,8 +5782,27 @@ suspend fun aiRedrawRegion(src: Bitmap, sel: FloatArray): Bitmap? {
     val patchW = R - L; val patchH = B - T
     // ★ 键控透明：把接近填充色的像素 alpha 置 0（img2img 残留的品红区域露出原图，无黑边）
     val keyed = makeKeyTransparent(outBmp, AI_REDRAW_FILL_COLOR)
-    val patch = if (keyed.width == patchW && keyed.height == patchH) keyed
-    else Bitmap.createScaledBitmap(keyed, patchW, patchH, true)
+    // ★ 修复④：先裁出有效内容区（去掉品红/透明边），再等比缩放到选区尺寸。
+    //   内容区宽高比 = region 原始宽高比 = patchW:patchH，等比缩放不变形。
+    //   旧版直接 createScaledBitmap(keyed, patchW, patchH) 把含边的整张拉伸 → 长宽比失真。
+    val patch = try {
+        // 裁出内容区（contentX/Y/W/H 是 contain 缩放时内容在 normW×normH 画布中的居中偏移）
+        val cx = contentX.coerceIn(0, keyed.width - 1)
+        val cy = contentY.coerceIn(0, keyed.height - 1)
+        val cw = contentW.coerceIn(1, keyed.width - cx)
+        val ch = contentH.coerceIn(1, keyed.height - cy)
+        val cropped = if (cx == 0 && cy == 0 && cw == keyed.width && ch == keyed.height) keyed
+                      else Bitmap.createBitmap(keyed, cx, cy, cw, ch)
+        // 等比缩放到选区尺寸（cw:ch == patchW:patchH，不变形）
+        if (cropped.width == patchW && cropped.height == patchH) cropped
+        else Bitmap.createScaledBitmap(cropped, patchW, patchH, true).also {
+            if (cropped !== keyed && !cropped.isRecycled) cropped.recycle()
+        }
+    } catch (_: Exception) {
+        // 兜底：裁切失败时回退到旧逻辑（不理想但不崩）
+        if (keyed.width == patchW && keyed.height == patchH) keyed
+        else Bitmap.createScaledBitmap(keyed, patchW, patchH, true)
+    }
     return try {
         val canvas = android.graphics.Canvas()
         val out = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
@@ -5399,24 +6015,61 @@ private fun folderSize(file: File): Long {
     }
 }
 
-/** 存储占用检查：统计模型目录、历史记录、App 数据/缓存目录的占用，返回多行报告文本 */
+/** 存储占用检查：统计安装包、native 库、内部数据、外部模型、缓存，返回多行报告文本
+ *  ★ 对齐系统"应用信息→存储"的统计口径，让 App 显示 ≈ 系统显示 */
 private fun checkStorageUsage(context: android.content.Context): String {
     val sb = StringBuilder()
     fun line(name: String, dir: File?) {
         val size = dir?.let { folderSize(it) } ?: 0L
         sb.append("$name: ${formatSize(size)}\n")
     }
-    line("模型目录(外部)", com.rmbg.offline.ml.ModelManager.modelDir())
-    line("历史记录", File(context.filesDir, "history"))
-    line("App 数据目录(含历史)", context.filesDir)
-    line("App 缓存目录", context.cacheDir)
-    // 汇总主要占用
+
+    // ① APK 安装包本体
+    var apkSize = 0L
+    try { apkSize = File(context.applicationInfo.sourceDir ?: "").length() } catch (_: Exception) {}
+    sb.append("APK 安装包: ${formatSize(apkSize)}\n")
+
+    // ② native 库解压目录（useLegacyPackaging=true 时有实体文件，JNI/QNN/ORT 运行时）
+    var nativeSize = 0L
+    try {
+        val ndir = File(context.applicationInfo.nativeLibraryDir ?: "")
+        if (ndir.exists()) nativeSize = folderSize(ndir)
+    } catch (_: Exception) {}
+    sb.append("Native 库目录: ${formatSize(nativeSize)}\n")
+
+    // ③ 内部数据目录（data/data/<pkg>/files）：细分子项，方便定位大头
+    val filesDir = context.filesDir
+    val qnnlibs = File(filesDir, "qnnlibs")      // AI 重绘 QNN 运行时（132MB，deployRuntime 复制）
+    val innerModels = File(filesDir, "models")   // AI 重绘 SD 模型（AnythingV5/MeinaMix 各 1.2GB+）
+    val aiModels = File(filesDir, "ai_models")   // AI 重绘模型 zip 源包
+    val innerHistory = File(filesDir, "history")
+    val work = File(filesDir, "work")
+    sb.append("内部数据(files)\n")
+    line("  ├ QNN 运行时(qnnlibs)", qnnlibs)
+    line("  ├ AI 模型(models)", innerModels)
+    line("  ├ 模型包(ai_models)", aiModels)
+    line("  ├ 历史(history)", innerHistory)
+    line("  ├ 工作区(work)", work)
+    // 其余 files 直接子文件
+    var filesOther = 0L
+    try {
+        filesDir.listFiles()?.forEach { f ->
+            if (f.isFile) filesOther += f.length()
+        }
+    } catch (_: Exception) {}
+    sb.append("  └ 其他文件: ${formatSize(filesOther)}\n")
+
+    // ④ 外部模型目录（Android/data/<pkg>/files/models，抠图模型）
+    line("外部模型(Android/data)", com.rmbg.offline.ml.ModelManager.modelDir())
+
+    // ⑤ 缓存目录
+    line("缓存目录", context.cacheDir)
+
+    // 汇总（与系统口径一致：APK + native + 内部 data + 外部 data）
     val total = listOf(
-        com.rmbg.offline.ml.ModelManager.modelDir(),
-        File(context.filesDir, "history"),
-        context.filesDir,
-        context.cacheDir
-    ).sumOf { folderSize(it) }
+        apkSize, nativeSize, folderSize(filesDir), folderSize(context.cacheDir),
+        folderSize(com.rmbg.offline.ml.ModelManager.modelDir())
+    ).sum()
     sb.append("────────────────\n")
     sb.append("合计: ${formatSize(total)}")
     return sb.toString().trim()

@@ -217,10 +217,8 @@ class RmbgOnnxEngine(
                     }
                     // ★★ 关键：设置 ADSP_LIBRARY_PATH 指向 QNN 库所在目录。
                     //   QNN HTP backend 通过它 dlopen libQnnHtpV73Stub.so（stub→skel），
-                    //   官方正确做法（参考 DakeQQ/ORT QNN Android 教程）：指向 ApplicationInfo.nativeLibraryDir
-                    //   （QNN runtime AAR 解压的 native lib 目录，含全套 stub/skel）。
-                    //   modelDir 里也有自拷的 QNN .so（老方案），作为兜底候选。
-                    val adspCandidates = listOfNotNull(nativeLibDir, com.rmbg.offline.ml.ModelManager.modelDir().absolutePath)
+                    //   正确做法：指向 ApplicationInfo.nativeLibraryDir（QNN runtime AAR 解压的 native lib 目录）。
+                    val adspCandidates = listOfNotNull(nativeLibDir)
                     var adspSet = ""
                     for (cand in adspCandidates) {
                         val f = File(cand)
@@ -428,11 +426,12 @@ class RmbgOnnxEngine(
         }
     }
 
-    /** 释放模型 */
+    /** 释放 session（★ 不关 env：OrtEnvironment.getEnvironment() 是进程级全局单例，
+     *   RmbgOnnxEngine 与 SuperResEngine 共用；关闭它会销毁 EPContext 运行环境，
+     *   之后超分/QNN 任一方再建 session 即报 ORT_NOT_IMPLEMENTED "EPContext ... not compatible"） */
     fun close() {
         closeRequested = true
         try { session?.close() } catch (_: Exception) {}
-        try { env?.close() } catch (_: Exception) {}
         session = null
         env = null
         closeRequested = false
