@@ -83,5 +83,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          APK="$(ls app/build/outputs/apk/normal/release/*.apk | grep -v unsigned | head -n 1)"
-          gh release create "$TAG" "$APK" --title "$TAG" --generate-notes --latest
+          # ★ 正式版双 APK：完整版(normal) + 精简版(lite)，全部上传到 Release
+          NORMAL_APK="$(ls app/build/outputs/apk/normal/release/*.apk | grep -v unsigned | head -n 1)"
+          LITE_APK="$(ls app/build/outputs/apk/lite/release/*.apk | grep -v unsigned | head -n 1)"
+          echo "normal=$NORMAL_APK"
+          echo "lite=$LITE_APK"
+          gh release create "$TAG" "$NORMAL_APK" "$LITE_APK" --title "$TAG" --generate-notes --latest
