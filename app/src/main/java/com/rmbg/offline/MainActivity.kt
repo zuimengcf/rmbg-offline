@@ -499,6 +499,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var turboMode by remember { mutableStateOf(Prefs.turboMode) }
     // ★ 本地模型列表版本号：导入/删除后自增，驱动列表响应式刷新
     var localModelsVersion by remember { mutableStateOf(0) }
+    // ★ 超分模型版本号：导入/下载/删除后自增，驱动超分卡片选中态+状态行响应式刷新。
+    //   超分卡片 UI 读 Prefs.superResModelPath（普通 getter，非 Compose State），必须靠它触发重组。
+    var superResVersion by remember { mutableStateOf(0) }
     // ★ 内置模型下载状态版本号：下载/删除后自增，驱动模型页"已下载/未下载"徽标刷新
     var builtinModelsVersion by remember { mutableStateOf(0) }
     // ★ 存储占用检查：各目录占用报告文本（空=尚未检查）
@@ -583,6 +586,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     // ★ 查看器拆分方案A：独立全屏"后处理/画笔"编辑页（从查看器拆出的新窗口）
     var showPostProcessScreen by remember { mutableStateOf(false) }
     var postProcessResult by remember { mutableStateOf<Bitmap?>(null) }
+    // ★ 智能选区：打开编辑页时直接进「选区」tab（SAM 模型就绪/查看器进入时置 true）
+    var postProcessInitSam by remember { mutableStateOf(false) }
     // ★ 4x 超分（独立按钮，不入历史）： viewerBitmap 超分后的临时放大图
     //   仅当前查看会话有效，可保存/分享；不写历史记录、不进撤销栈（用户要求）
     var superResBusy by remember { mutableStateOf(false) }
@@ -591,6 +596,10 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     // ★ 查看器当前显示结果对应的原图（历史记录打开时加载该记录的原图副本，
     //   供后处理编辑页的"恢复画笔"从正确的原图取原背景色，避免用错主界面当前原图）
     var viewerOriginBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    // ---- SAM 智能选区（已并入 PostProcessScreen「选区」tab）----
+    // SAM 模型就绪版本号（下载/删除后自增，驱动入口可用态刷新）
+    var samReadyVersion by remember { mutableStateOf(0) }
 
     // ---- AI 重绘（LocalDream img2img，一键执行）----
     var aiRedrawRequestId by remember { mutableIntStateOf(0) }    // 查看器按钮触发计数（>0 时执行）
@@ -718,31 +727,45 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         scope.launch {
             superResBusy = true
             var failMsg = ""
-            val up = withContext(Dispatchers.IO) {
-                try {
-                    val imported = com.rmbg.offline.Prefs.superResModelPath
-                    if (imported.isNotEmpty() && java.io.File(imported).exists()) {
-                        // ★ 优先用导入的超分模型（QNN EPContext 或普通 ONNX，自动检测）
-                        val eng = com.rmbg.offline.ml.SuperResEngine.loadFromFile(context, java.io.File(imported), threads = 4)
-                        try { eng.upscale4x(cur) } finally { eng.close() }
-                    } else {
-                        val model = com.rmbg.offline.ml.SuperResEngine.loadFromAssets(context, "models/realesrgan_anime6b.onnx")
-                        if (model == null) {
-                            failMsg = "模型加载失败（assets 缺失）"
-                            null
-                        } else {
-                            val eng = com.rmbg.offline.ml.SuperResEngine(threads = 4, modelBytes = model)
-                            try { eng.upscale4x(cur) } finally { eng.close() }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // ★ 记录具体失败原因（真机排查超分失败用）
-                    android.util.Log.e("RMBG-SUPER", "超分失败", e)
-                    failMsg = "超分失败：${e.message?.take(80) ?: e.javaClass.simpleName}"
-                    null
+            // ★ 运行监测看门狗：超分引擎卡死时强制定时复位（防"加载动画永久转圈/按钮永久禁用"）。
+            //   4x 大图放大慢，给足 5 分钟；正常路径 finally 会取消它。
+            val watchdog = launch {
+                delay(300_000)
+                if (superResBusy) {
+                    superResBusy = false
+                    Toast.makeText(context, "⚠️ 超分超时（5 分钟无响应），已停止等待", Toast.LENGTH_LONG).show()
                 }
             }
-            superResBusy = false
+            val up = try {
+                withContext(Dispatchers.IO) {
+                    try {
+                        val imported = com.rmbg.offline.Prefs.superResModelPath
+                        if (imported.isNotEmpty() && java.io.File(imported).exists()) {
+                            // ★ 优先用导入的超分模型（QNN EPContext 或普通 ONNX，自动检测）
+                            val eng = com.rmbg.offline.ml.SuperResEngine.loadFromFile(context, java.io.File(imported), threads = 4)
+                            try { eng.upscale4x(cur) } finally { eng.close() }
+                        } else {
+                            val model = com.rmbg.offline.ml.SuperResEngine.loadFromAssets(context, "models/realesrgan_anime6b.onnx")
+                            if (model == null) {
+                                failMsg = "模型加载失败（assets 缺失）"
+                                null
+                            } else {
+                                val eng = com.rmbg.offline.ml.SuperResEngine(threads = 4, modelBytes = model)
+                                try { eng.upscale4x(cur) } finally { eng.close() }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ★ 记录具体失败原因（真机排查超分失败用）
+                        android.util.Log.e("RMBG-SUPER", "超分失败", e)
+                        failMsg = "超分失败：${e.message?.take(80) ?: e.javaClass.simpleName}"
+                        null
+                    }
+                }
+            } finally {
+                // ★ 运行监测：取消看门狗 + busy 必定复位（成功/失败/超时都会走到）
+                watchdog.cancel()
+                superResBusy = false
+            }
             if (up != null && !up.isRecycled && up.width > 0) {
                 // ★ 不入历史：直接替换查看器显示图；记录当前尺寸用于 UI 提示 + 防重复超分
                 superResLastW = up.width; superResLastH = up.height
@@ -1094,6 +1117,47 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
     }
 
+    // ---- SAM 智能分割模型导入（SAF 选 .zip：encoder + decoder onnx）----
+    // ★ 模型包：sam_sam-mask-recolor_with_onnx_model.zip（含 sam_vit_b_01ec64.encoder/decoder.onnx）
+    //   也兼容任意含 encoder.onnx + decoder.onnx 的包（按文件名关键词识别）
+    val importSamLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        Toast.makeText(context, "正在导入 SAM 模型包（约 370MB，需数秒~数十秒）...", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val tmp = File(context.cacheDir, "sam_import_${System.currentTimeMillis()}.zip")
+                        tmp.outputStream().use { out -> input.copyTo(out) }
+                        val r = ModelManager.importSamModelZip(tmp)
+                        tmp.delete()
+                        r
+                    } ?: false
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-SAM", "SAM zip 导入失败", e)
+                    false
+                }
+            }
+            samReadyVersion++
+            if (ok) {
+                Toast.makeText(context, "SAM 模型已就绪，可开始智能选区", Toast.LENGTH_LONG).show()
+                // 就绪后自动打开编辑页（含「选区」tab，若有当前查看图）
+                val src = viewerBitmap ?: viewerOriginBitmap ?: originalBitmap
+                if (src != null && !src.isRecycled) {
+                    postProcessResult = src
+                    postProcessInitSam = true
+                    showPostProcessScreen = true
+                    viewerItem = null
+                    showOriginalViewer = false
+                }
+            } else {
+                Toast.makeText(context, "SAM 模型导入失败，请确认是含 encoder+decoder 的模型包 zip", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     // ---- 超分模型导入（SAF 选 .zip 或 .onnx）----
     // ★ 与抠图模型隔离：走 importSuperResModelZip 存到 modelDir()/superres/ 子目录，
     //   绝不进入抠图 localModels() 列表。CPU 超分可导入单 .onnx；QNN 超分导入 onnx+bin zip。
@@ -1136,6 +1200,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             }
             if (result != null && File(result).exists()) {
                 Prefs.superResModelPath = result
+                superResVersion++ // ★ 触发超分卡片选中态+状态行刷新
                 Toast.makeText(context, "超分模型已导入（${File(result).name}）", Toast.LENGTH_LONG).show()
             } else {
                 Toast.makeText(context, "超分模型导入失败：请选择包含 onnx(+bin) 的 zip 或单个 onnx", Toast.LENGTH_LONG).show()
@@ -1214,7 +1279,6 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             }
         }
     }
-
     // ---- 下载模型 ----
     fun startDownload() {
         if (isDownloading) return
@@ -1269,7 +1333,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
         ModelManager.selectedMirrorIndex = selectedMirrorIndex
         ModelManager.hfToken = hfTokenInput.trim()
-        ModelManager.builtinModels.find { it.id == selectedBuiltinId }?.let { bm ->
+        val selBmForDl = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
+        selBmForDl?.let { bm ->
             ModelManager.hfRepo = bm.hfRepo
             ModelManager.hfFile = bm.hfFile
             modelRepo = bm.hfRepo
@@ -1288,43 +1353,87 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             downloadTotal = 0L
             statusText = "正在下载模型..."
             activeMirrorName = null
-            ModelManager.downloadModel(
-                context = context,
-                listener = object : ModelManager.ProgressListener {
-                    override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
-                        downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
-                        downloadSpeed = speedBps
-                        downloadBytes = bytesDownloaded
-                        downloadTotal = totalBytes
-                        statusText = "下载中..."
+            // ★ 直链模型（directUrl）走 downloadModelFromUrlTo（GitHub/HF 直链，不支持镜像循环）；
+            //   普通 HF 模型走 downloadModel（镜像循环 + 302 + 分块 + 断点续传）
+            if (selBmForDl?.hasDirectUrl == true) {
+                ModelManager.downloadModelFromUrlTo(
+                    context = context,
+                    url = selBmForDl.directUrl!!,
+                    destFile = java.io.File(ModelManager.modelDir(), "model_${selBmForDl.id}.onnx"),
+                    listener = object : ModelManager.ProgressListener {
+                        override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                            downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
+                            downloadSpeed = speedBps
+                            downloadBytes = bytesDownloaded
+                            downloadTotal = totalBytes
+                            statusText = "下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB..."
+                        }
+                        override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
+                            activeMirrorName = mirrorName
+                            statusText = "正在从 $mirrorName 下载..."
+                        }
+                        override fun onMirrorError(mirrorName: String, error: String) {
+                            android.util.Log.e("RMBG-DL", "$mirrorName 失败: $error")
+                            statusText = "$mirrorName 失败: $error"
+                        }
+                        override fun onDone(file: File) {
+                            downloadingJob = null
+                            modelReady = true
+                            isDownloading = false
+                            statusText = "模型下载完成！选择图片开始抠图"
+                            Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
+                        }
+                        override fun onError(e: Exception) {
+                            downloadingJob = null
+                            isDownloading = false
+                            activeMirrorName = null
+                            statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
+                            if (ModelManager.isCancelRequested())
+                                Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
+                            else
+                                Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
-                        activeMirrorName = mirrorName
-                        statusText = "正在从 $mirrorName 下载..."
+                )
+            } else {
+                ModelManager.downloadModel(
+                    context = context,
+                    listener = object : ModelManager.ProgressListener {
+                        override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                            downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
+                            downloadSpeed = speedBps
+                            downloadBytes = bytesDownloaded
+                            downloadTotal = totalBytes
+                            statusText = "下载中..."
+                        }
+                        override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
+                            activeMirrorName = mirrorName
+                            statusText = "正在从 $mirrorName 下载..."
+                        }
+                        override fun onMirrorError(mirrorName: String, error: String) {
+                            android.util.Log.e("RMBG-DL", "$mirrorName 失败: $error")
+                            statusText = "$mirrorName 失败: $error"
+                        }
+                        override fun onDone(file: File) {
+                            downloadingJob = null
+                            modelReady = true
+                            isDownloading = false
+                            statusText = "模型下载完成！选择图片开始抠图"
+                            Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
+                        }
+                        override fun onError(e: Exception) {
+                            downloadingJob = null
+                            isDownloading = false
+                            activeMirrorName = null
+                            statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
+                            if (ModelManager.isCancelRequested())
+                                Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
+                            else
+                                Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                    override fun onMirrorError(mirrorName: String, error: String) {
-                        android.util.Log.e("RMBG-DL", "$mirrorName 失败: $error")
-                        statusText = "$mirrorName 失败: $error"
-                    }
-                    override fun onDone(file: File) {
-                        downloadingJob = null
-                        modelReady = true
-                        isDownloading = false
-                        statusText = "模型下载完成！选择图片开始抠图"
-                        Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
-                    }
-                    override fun onError(e: Exception) {
-                        downloadingJob = null
-                        isDownloading = false
-                        activeMirrorName = null
-                        statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
-                        if (ModelManager.isCancelRequested())
-                            Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
-                        else
-                            Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            )
+                )
+            }
         }
     }
 
@@ -2116,28 +2225,53 @@ Card(
                                                 scope.launch {
                                                     downloadingId = bm.id
                                                     statusText = "正在下载 ${bm.name}..."
-                                                    ModelManager.downloadModel(
-                                                        context = context,
-                                                        listener = object : ModelManager.ProgressListener {
-                                                            override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
-                                                                downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
-                                                                downloadSpeed = speedBps
-                                                                downloadBytes = bytesDownloaded
-                                                                downloadTotal = totalBytes
+                                                    // ★ 直链模型（directUrl）走 downloadModelFromUrlTo（GitHub/HF 直链，不支持镜像循环）；
+                                                    //   普通 HF 模型走 downloadModel（镜像循环 + 302 + 分块 + 断点续传）
+                                                    val ok = if (bm.hasDirectUrl) {
+                                                        ModelManager.downloadModelFromUrlTo(
+                                                            context = context,
+                                                            url = bm.directUrl!!,
+                                                            destFile = java.io.File(ModelManager.modelDir(), "model_${bm.id}.onnx"),
+                                                            listener = object : ModelManager.ProgressListener {
+                                                                override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                                                                    downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
+                                                                    downloadSpeed = speedBps
+                                                                    downloadBytes = bytesDownloaded
+                                                                    downloadTotal = totalBytes
+                                                                    statusText = "下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB..."
+                                                                }
+                                                                override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) { activeMirrorName = mirrorName }
+                                                                override fun onMirrorError(mirrorName: String, error: String) { activeMirrorName = null }
+                                                                override fun onDone(file: File) {}
+                                                                override fun onError(e: Exception) {
+                                                                    statusText = "${bm.name} 下载失败: ${e.message ?: "未知错误"}"
+                                                                }
                                                             }
-                                                            override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
-                                                                activeMirrorName = mirrorName
-                                                                statusText = "正在从 $mirrorName 下载 ${bm.name}..."
+                                                        )
+                                                    } else {
+                                                        ModelManager.downloadModel(
+                                                            context = context,
+                                                            listener = object : ModelManager.ProgressListener {
+                                                                override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                                                                    downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
+                                                                    downloadSpeed = speedBps
+                                                                    downloadBytes = bytesDownloaded
+                                                                    downloadTotal = totalBytes
+                                                                }
+                                                                override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
+                                                                    activeMirrorName = mirrorName
+                                                                    statusText = "正在从 $mirrorName 下载 ${bm.name}..."
+                                                                }
+                                                                override fun onMirrorError(mirrorName: String, error: String) {
+                                                                    activeMirrorName = null
+                                                                }
+                                                                override fun onDone(file: File) {}
+                                                                override fun onError(e: Exception) {
+                                                                    statusText = "${bm.name} 下载失败: ${e.message ?: "未知错误"}"
+                                                                }
                                                             }
-                                                            override fun onMirrorError(mirrorName: String, error: String) {
-                                                                activeMirrorName = null
-                                                            }
-                                                            override fun onDone(file: File) {}
-                                                            override fun onError(e: Exception) {
-                                                                statusText = "${bm.name} 下载失败: ${e.message ?: "未知错误"}"
-                                                            }
-                                                        }
-                                                    )
+                                                        )
+                                                    }
                                                     modelReady = ModelManager.isModelDownloaded()
                                                     builtinModelsVersion++ // ★ 刷新内置模型下载状态
                                                     statusText = if (modelReady) "${bm.name} 下载完成，模型已就绪" else "${bm.name} 下载失败，请重试"
@@ -2165,6 +2299,8 @@ Card(
                             modifier = Modifier.padding(top = 8.dp)
                         )
                         ModelManager.qnnModels.forEach { bm ->
+                            // ★ 超分条目已移入独立「超分模型」卡片（不参与抠图选择）
+                            if (bm.id == "qnn_realesrgan") return@forEach
                             val selected = selectedBuiltinId == bm.id
                             val bmReady = builtinReadyCache[bm.id] ?: ModelManager.isBuiltinModelDownloaded(bm)
                             val bmDownloading = downloadingId == bm.id
@@ -2363,6 +2499,262 @@ Card(
                                 }
                             }
                         }
+                        // ★ 超分条目已移入下方独立「超分模型」卡片
+                    }
+                }
+            }
+
+
+            // ===== 超分模型（独立卡片，QNN / CPU 互斥选择）=====
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.ZoomIn, contentDescription = null, tint = Color(0xFFFF8F00))
+                        Spacer(Modifier.width(8.dp))
+                        Text("超分模型（4x 放大）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    }
+                    Text(
+                        "AI 放大 4 倍：QNN（骁龙 DSP 加速）或 CPU（内置通用模型）二选一。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // ---- QNN 超分条目（qnn_realesrgan，云下载）----
+                    // ★ 必须从 qnnModels 取：builtinModels 在 lite 版不包含 qnn_realesrgan，
+                    //   会导致独立卡片里 QNN 下载入口不渲染（只剩 CPU）。qnnModels 始终含它。
+                    // ★ 绑定 superResVersion：选中态/状态行读 Prefs 普通 getter，靠它触发重组刷新。
+                    superResVersion
+                    val srQnn = ModelManager.qnnModels.find { it.id == "qnn_realesrgan" }
+                    if (srQnn != null) {
+                        val srQnnReady = builtinReadyCache["qnn_realesrgan"] ?: ModelManager.isBuiltinModelDownloaded(srQnn)
+                        val srQnnDownloading = downloadingId == "qnn_realesrgan"
+                        // QNN 超分选中态：superResModelPath 非空且文件存在（下载或导入的 QNN/外部超分模型）
+                        val srQnnSelected = com.rmbg.offline.Prefs.superResModelPath.isNotEmpty()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (srQnnSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = srQnnSelected,
+                                onClick = {
+                                    if (isProcessing) return@RadioButton
+                                    // 选中 QNN 超分：若未下载则触发下载，已下载则直接启用
+                                    if (!srQnnReady) {
+                                        scope.launch {
+                                            downloadingId = "qnn_realesrgan"
+                                            statusText = "正在下载超分模型（QNN HTP / CPU 自适应）..."
+                                            val path = ModelManager.downloadSuperResModel(
+                                                context = context,
+                                                listener = object : ModelManager.ProgressListener {
+                                                    override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                                                        statusText = "超分下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB"
+                                                    }
+                                                    override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) { statusText = "正在从 $mirrorName 下载超分模型..." }
+                                                    override fun onMirrorError(mirrorName: String, error: String) { statusText = "$mirrorName 下载失败：$error" }
+                                                    override fun onDone(file: java.io.File) {}
+                                                    override fun onError(e: Exception) { statusText = "超分下载错误：${e.message}" }
+                                                }
+                                            )
+                                            downloadingId = null
+                                            if (path != null && java.io.File(path).exists()) {
+                                                com.rmbg.offline.Prefs.superResModelPath = path
+                                                builtinModelsVersion++
+                                                statusText = "✅ 超分模型已下载（QNN HTP 加速），超分时自动启用"
+                                                Toast.makeText(context, "超分模型已就绪（QNN HTP）", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                // 回退 CPU：内置 assets 已就绪
+                                                com.rmbg.offline.Prefs.superResModelPath = ""
+                                                builtinModelsVersion++
+                                                statusText = "当前设备自动使用内置 CPU 超分（免下载）"
+                                                Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    } else {
+                                        // 已下载：直接启用 QNN 超分（path 已指向下载的模型）
+                                        if (com.rmbg.offline.Prefs.superResModelPath.isEmpty()) {
+                                            val existing = java.io.File(com.rmbg.offline.ml.ModelManager.superResDir(), "superres_model.onnx")
+                                            if (existing.exists()) {
+                                                com.rmbg.offline.Prefs.superResModelPath = existing.absolutePath
+                                            }
+                                        }
+                                        builtinModelsVersion++
+                                        statusText = "已启用 QNN 超分（骁龙 DSP 加速）"
+                                        Toast.makeText(context, "已启用 QNN 超分", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                            Column(
+                                Modifier
+                                    .padding(start = 6.dp)
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                            ) {
+                                Text(
+                                    "QNN 超分（骁龙 DSP 加速）",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (srQnnSelected) FontWeight.Bold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "Real-ESRGAN · SM8350~SM8850 多型号 · 28-30MB（512→2048）",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                if (srQnnReady) {
+                                    Text("✅ 已就绪", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                } else {
+                                    Text("未下载", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                }
+                                if (srQnnReady) {
+                                    // 已就绪 → 删除按钮
+                                    IconButton(
+                                        onClick = {
+                                            ModelManager.deleteBuiltinModel(srQnn)
+                                            builtinModelsVersion++
+                                            com.rmbg.offline.Prefs.superResModelPath = ""
+                                            statusText = "超分模型已删除，超分回退内置 CPU 模型"
+                                            Toast.makeText(context, "超分模型已删除", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Delete, contentDescription = "删除 QNN 超分", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                    }
+                                } else {
+                                    // 未下载 → 下载按钮
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                downloadingId = "qnn_realesrgan"
+                                                statusText = "正在下载超分模型（QNN HTP / CPU 自适应）..."
+                                                val path = ModelManager.downloadSuperResModel(
+                                                    context = context,
+                                                    listener = object : ModelManager.ProgressListener {
+                                                        override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                                                            statusText = "超分下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB"
+                                                        }
+                                                        override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) { statusText = "正在从 $mirrorName 下载超分模型..." }
+                                                        override fun onMirrorError(mirrorName: String, error: String) { statusText = "$mirrorName 下载失败：$error" }
+                                                        override fun onDone(file: java.io.File) {}
+                                                        override fun onError(e: Exception) { statusText = "超分下载错误：${e.message}" }
+                                                    }
+                                                )
+                                                downloadingId = null
+                                                if (path != null && java.io.File(path).exists()) {
+                                                    com.rmbg.offline.Prefs.superResModelPath = path
+                                                    builtinModelsVersion++
+                                                    statusText = "✅ 超分模型已下载（QNN HTP 加速）"
+                                                    Toast.makeText(context, "超分模型已就绪（QNN HTP）", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    com.rmbg.offline.Prefs.superResModelPath = ""
+                                                    builtinModelsVersion++
+                                                    statusText = "当前设备自动使用内置 CPU 超分（免下载）"
+                                                    Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        if (srQnnDownloading) {
+                                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                        } else {
+                                            Icon(Icons.Filled.Download, contentDescription = "下载 QNN 超分", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- CPU 超分条目（内置通用模型，免下载）----
+                    val cpuSrSelected = com.rmbg.offline.Prefs.superResModelPath.isEmpty()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (cpuSrSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+                            .selectable(
+                                selected = cpuSrSelected,
+                                enabled = !isProcessing,
+                                onClick = {
+                                    if (isProcessing) return@selectable
+                                    com.rmbg.offline.Prefs.superResModelPath = ""
+                                    builtinModelsVersion++
+                                    statusText = "已选用 CPU 超分（内置通用模型，兼容所有设备）"
+                                    Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = cpuSrSelected, onClick = {
+                            if (isProcessing) return@RadioButton
+                            com.rmbg.offline.Prefs.superResModelPath = ""
+                            builtinModelsVersion++
+                            statusText = "已选用 CPU 超分（内置通用模型，兼容所有设备）"
+                            Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                        })
+                        Column(
+                            Modifier
+                                .padding(start = 6.dp)
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) {
+                            Text(
+                                "CPU 超分（内置通用模型）",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (cpuSrSelected) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "兼容所有设备 · 免下载 · 18MB 内置 Real-ESRGAN 4x",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("✅ 内置就绪", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                        }
+                    }
+
+                    // ---- 导入超分模型（SAF 选 .zip 或 .onnx）----
+                    OutlinedButton(
+                        onClick = { importSuperResLauncher.launch("*/*") },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导入超分模型（onnx / zip）")
+                    }
+                    // ★ 当前已导入/选用的超分模型状态
+                    val curSrPath = com.rmbg.offline.Prefs.superResModelPath
+                    if (curSrPath.isNotEmpty() && File(curSrPath).exists()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF4FC3F7))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "超分模型: ${File(curSrPath).name}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF4FC3F7),
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
@@ -2402,30 +2794,6 @@ Card(
                         Icon(Icons.Filled.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("导入 zip（onnx + bin）")
-                    }
-                    // ★ 超分模型导入：独立入口，走 importSuperResModelZip 存 superres/ 目录，绝不混入抠图列表
-                    OutlinedButton(
-                        onClick = { importSuperResLauncher.launch("*/*") },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("导入超分模型")
-                    }
-                    // ★ 当前已导入的超分模型状态
-                    val curSrPath = com.rmbg.offline.Prefs.superResModelPath
-                    if (curSrPath.isNotEmpty() && File(curSrPath).exists()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF4FC3F7))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                "超分模型: ${File(curSrPath).name}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF4FC3F7),
-                                maxLines = 1
-                            )
-                        }
                     }
                     // 已导入的本地模型列表（绑定版本号：导入/删除后响应式刷新；复用 Tab 1 顶部缓存，避免重复扫描磁盘）
                     val locals = localModelCache
@@ -2917,12 +3285,34 @@ Card(
                     //   复用 Tab 1 顶部缓存，避免每次重组 listFiles 扫 1GB+ 目录卡顿
                     val deployedList = deployedModelCache
                     if (deployedList.isNotEmpty()) {
-                        Text("已部署模型（点击切换）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF7B1FA2))
+                        Text("已部署模型", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF7B1FA2))
                         val currentId = AiRedrawEngine.activeModelId.ifBlank { Prefs.aiRedrawModelId }
                         deployedList.forEach { id ->
                             val isCurrent = id == currentId
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isCurrent) Color(0xFF7B1FA2).copy(alpha = 0.10f) else Color.Transparent)
+                                    .selectable(
+                                        selected = isCurrent,
+                                        enabled = !aiEngineBusy && !aiRedrawDownloading,
+                                        onClick = {
+                                            if (id != currentId && !aiEngineBusy) {
+                                                val ok = AiRedrawEngine.selectDeployedModel(context, id)
+                                                if (ok) {
+                                                    aiModelZipReady = AiRedrawEngine.isModelReady(context)
+                                                    deployedModelsVersion++
+                                                    aiEngineStatus = "✅ 已切换到模型: $id"
+                                                }
+                                            }
+                                        }
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isCurrent,
                                     onClick = {
                                         if (id != currentId && !aiEngineBusy) {
                                             val ok = AiRedrawEngine.selectDeployedModel(context, id)
@@ -2932,52 +3322,62 @@ Card(
                                                 aiEngineStatus = "✅ 已切换到模型: $id"
                                             }
                                         }
-                                    },
-                                    enabled = !aiEngineBusy && !aiRedrawDownloading,
-                                    modifier = Modifier.weight(1f).heightIn(min = 40.dp),
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = if (isCurrent) Color(0xFF2E7D32) else Color(0xFF7B1FA2),
-                                        containerColor = if (isCurrent) Color(0xFF2E7D32).copy(alpha = 0.08f) else Color.Transparent
-                                    )
+                                    }
+                                )
+                                Column(
+                                    Modifier
+                                        .padding(start = 6.dp)
+                                        .weight(1f)
+                                        .fillMaxWidth()
                                 ) {
-                                    Icon(
-                                        if (isCurrent) Icons.Filled.CheckCircle else Icons.Filled.Storage,
-                                        contentDescription = null, modifier = Modifier.size(16.dp),
-                                        tint = if (isCurrent) Color(0xFF2E7D32) else Color(0xFF7B1FA2)
+                                    // ★ 完整显示模型名：不限制行数，超长文件名可自动换行
+                                    Text(
+                                        if (isCurrent) "$id（当前）" else id,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
                                     )
-                                    Spacer(Modifier.width(6.dp))
-                                    // ★ 完整显示模型名：不限制行数，超长文件名可自动换行（否则 maxLines=1 截断看不见）
-                                    Text(if (isCurrent) "$id（当前）" else id, fontSize = 13.sp)
+                                    Text(
+                                        "SD1.5 · QNN 本地重绘 · 约 1GB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                                // ★ 删除该已部署模型（释放约 1GB 空间；删当前模型则清空状态）
-                                //   样式与抠图模型删除一致：IconButton 红色垃圾桶
-                                IconButton(
-                                    onClick = {
-                                        if (aiEngineBusy) return@IconButton
-                                        scope.launch {
-                                            val ok = withContext(Dispatchers.IO) {
-                                                AiRedrawEngine.deleteDeployedModel(context, id)
+                                Spacer(Modifier.width(4.dp))
+                                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (isCurrent) {
+                                        Text("✅ 当前", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                    } else {
+                                        Text("已部署", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                    }
+                                    // ★ 删除该已部署模型（释放约 1GB 空间；删当前模型则清空状态）
+                                    //   样式与抠图/超分模型删除一致：IconButton 红色垃圾桶
+                                    IconButton(
+                                        onClick = {
+                                            if (aiEngineBusy) return@IconButton
+                                            scope.launch {
+                                                val ok = withContext(Dispatchers.IO) {
+                                                    AiRedrawEngine.deleteDeployedModel(context, id)
+                                                }
+                                                if (ok) {
+                                                    aiModelZipReady = AiRedrawEngine.isModelReady(context)
+                                                    deployedModelsVersion++
+                                                    aiEngineStatus = "🗑 已删除模型: $id"
+                                                    Toast.makeText(context, "已删除模型 $id", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    Toast.makeText(context, "删除失败", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
-                                            if (ok) {
-                                                aiModelZipReady = AiRedrawEngine.isModelReady(context)
-                                                deployedModelsVersion++
-                                                aiEngineStatus = "🗑 已删除模型: $id"
-                                                Toast.makeText(context, "已删除模型 $id", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(context, "删除失败", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    },
-                                    enabled = !aiEngineBusy && !aiRedrawDownloading,
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = "删除 $id",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                        },
+                                        enabled = !aiEngineBusy && !aiRedrawDownloading,
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = "删除 $id",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -5120,10 +5520,22 @@ Card(
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8F00))
                             ) {
-                                Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
-                                Spacer(Modifier.width(3.dp))
-                                Text(if (superResBusy) "超分中…" else "4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                if (superResBusy) {
+                                    // ★ 运行中：转圈动画（加载监测）——busy 复位（停止/完成/报错）自动消失
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFFFF8F00)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("超分中…", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                } else {
+                                    Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
+                                    Spacer(Modifier.width(3.dp))
+                                    Text("4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                }
                             }
+                            // ★★ 智能选区已并入「编辑」页（PostProcessScreen 的「选区」tab）
                             // ★ AI 重绘入口：一键执行（参数用设置页预设）。无模型包则先弹选择器；有/已部署则直接触发
                             OutlinedButton(
                                 onClick = {
@@ -5145,12 +5557,20 @@ Card(
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7B1FA2))
                             ) {
-                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
-                                Spacer(Modifier.width(3.dp))
-                                Text(
-                                    if (aiRedrawRunning) "重绘中..." else "AI 重绘",
-                                    fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false
-                                )
+                                if (aiRedrawRunning) {
+                                    // ★ 运行中：转圈动画（加载监测）——running 复位（停止/完成/报错）自动消失
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFF7B1FA2)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("重绘中...", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                } else {
+                                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
+                                    Spacer(Modifier.width(3.dp))
+                                    Text("AI 重绘", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                }
                             }
                         }
                         // ★ 撤销/前进/按住对比（结果查看：编辑历史操作）
@@ -5325,9 +5745,20 @@ Card(
                                     bmp.width < 2048 && bmp.height < 2048,
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF8F00))
                             ) {
-                                Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
-                                Spacer(Modifier.width(3.dp))
-                                Text(if (superResBusy) "超分中…" else "4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                if (superResBusy) {
+                                    // ★ 运行中：转圈动画（加载监测）——busy 复位（停止/完成/报错）自动消失
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFFFF8F00)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("超分中…", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                } else {
+                                    Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
+                                    Spacer(Modifier.width(3.dp))
+                                    Text("4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                }
                             }
                             // ★ AI 重绘（原图）：一键执行（参数用设置页预设）。无模型包弹选择器；有/已部署则直接触发
                             OutlinedButton(
@@ -5348,9 +5779,20 @@ Card(
                                 enabled = bmp != null && !aiEngineBusy && !aiRedrawRunning,
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7B1FA2))
                             ) {
-                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
-                                Spacer(Modifier.width(3.dp))
-                                Text(if (aiRedrawRunning) "重绘中..." else "AI 重绘", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                if (aiRedrawRunning) {
+                                    // ★ 运行中：转圈动画（加载监测）——running 复位（停止/完成/报错）自动消失
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFF7B1FA2)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("重绘中...", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                } else {
+                                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
+                                    Spacer(Modifier.width(3.dp))
+                                    Text("AI 重绘", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                }
                             }
                         }
                         // 第二行：立即抠图 + 保存相册 + 另存为（统一 40dp 高 / 10dp 圆角 / 6dp 间距，减小内边距防文字截断）
@@ -5401,7 +5843,7 @@ Card(
         }
     }
 
-    // ★ 查看器拆分方案A：独立全屏"后处理/画笔"编辑页覆盖层（从查看器拆出的新窗口）
+    // ★ 查看器拆分方案A：独立全屏"后处理/画笔/选区"编辑页覆盖层（从查看器拆出的新窗口）
     if (showPostProcessScreen) {
         val ppRes = postProcessResult
         if (ppRes != null && !ppRes.isRecycled) {
@@ -5409,6 +5851,7 @@ Card(
                 result = ppRes,
                 originPx = viewerBgOrigin,
                 originBitmap = viewerOriginBitmap ?: originalBitmap,
+                initialSamMode = postProcessInitSam,  // ★ 智能选区入口 → 直接进「选区」tab
                 onApply = { edited ->
                     if (!edited.isRecycled) {
                         pushUndo(resultBitmap)
@@ -5449,18 +5892,21 @@ Card(
                         showPostProcessScreen = false
                         postProcessResult = null
                         postProcessHistoryItem = null
+                        postProcessInitSam = false
                     }
                 },
                 onBack = {
                     showPostProcessScreen = false
                     postProcessResult = null
                     postProcessHistoryItem = null
+                    postProcessInitSam = false
                 }
             )
         } else {
             // 兜底：结果缺失则退回查看器
             showPostProcessScreen = false
             postProcessResult = null
+            postProcessInitSam = false
         }
     }
 
@@ -5478,6 +5924,16 @@ Card(
         aiEngineStopJob = null
         aiRedrawRunning = true
         aiRedrawStatus = ""
+        // ★ 运行监测看门狗：引擎卡死/网络挂起时强制定时复位（防"加载动画永久转圈/按钮永久禁用"）。
+        //   重绘含模型部署/启动，给足 10 分钟；正常路径 finally 会取消它。
+        val watchdog = scope.launch {
+            delay(600_000)
+            if (aiRedrawRunning) {
+                aiRedrawRunning = false
+                aiRedrawStatus = "⚠️ 重绘超时（10 分钟无响应），已停止等待"
+                Toast.makeText(context, "⚠️ AI 重绘超时，请检查模型/网络后重试", Toast.LENGTH_LONG).show()
+            }
+        }
         // ★ 重绘源：查看器当前显示图优先（结果/历史），否则主界面原图
         val src = viewerBitmap ?: originalBitmap
         if (src == null) {
@@ -5599,8 +6055,12 @@ Card(
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     aiRedrawStatus = "❌ 重绘失败: ${e.message}"
+                    // ★ 报错监测：失败立即 Toast 透传，用户不用去翻状态栏
+                    Toast.makeText(context, "AI 重绘失败：${e.message?.take(80) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                 }
             } finally {
+                // ★ 运行监测：取消看门狗（正常完成/报错路径提前解除超时兜底）
+                watchdog.cancel()
                 // ★ 重绘完成后不立即停引擎（可能有第二次重绘）：
                 //   取消旧延迟停止 Job，启动新的空闲超时 Job（默认 60s 无新重绘才停）。
                 //   LocalDream 后端不动它的进程；Lite 精简版只用 LocalDream，无本地引擎可停。
