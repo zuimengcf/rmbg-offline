@@ -21,12 +21,18 @@ android {
     compileSdk = 35
     buildToolsVersion = "35.0.0"
 
+    // ★ 大型 ONNX 模型不做 AAPT 压缩：391MB 的 SAM 模型（encoder 359MB + decoder 16MB）直接存储，
+    //   避免压缩解压的 CPU/内存峰值，且 ModelManager 用 assets.open 流式拷贝更稳定。
+    aaptOptions {
+        noCompress.addAll(listOf("onnx", "bin"))
+    }
+
     defaultConfig {
         applicationId = "com.rmbg.offline"
         minSdk = 27
         targetSdk = 35
-        versionCode = 42
-        versionName = "1.1.2"
+        versionCode = 43
+        versionName = "1.2.0"
 
         // ★ 是否为 Lite 精简版（包名 com.rmbg.offline.lite，模型不内置、走 HF 云下载）
         buildConfigField("boolean", "IS_LITE", "false")
@@ -43,15 +49,15 @@ android {
         create("normal") {
             dimension = "edition"
             applicationId = "com.rmbg.offline"
-            versionCode = 42
-            versionName = "1.1.2"
+            versionCode = 43
+            versionName = "1.2.0"
             buildConfigField("boolean", "IS_LITE", "false")
         }
         create("lite") {
             dimension = "edition"
             applicationId = "com.rmbg.offline.lite"
-            versionCode = 42
-            versionName = "1.1.2"
+            versionCode = 43
+            versionName = "1.2.0"
             buildConfigField("boolean", "IS_LITE", "true")
         }
     }
@@ -276,5 +282,84 @@ tasks.register("downloadQnnBins") {
 tasks.configureEach {
     if (name == "preBuild") {
         dependsOn("downloadQnnBins")
+        dependsOn("downloadSamModels")
     }
+}
+
+// =============================================================
+// ★ normal（完整版）构建时自动下载 SAM CPU 分割模型（encoder/decoder）
+// -------------------------------------------------------------
+// SAM ONNX（encoder 343MB + decoder 16MB）不入 git 仓库（.gitignore 忽略）。
+// 云编译（GitHub Actions）与本地构建 normal 版时自动从 HF 拉到 assets/sam/，
+// 复用 QNN 的镜像源与断点续传逻辑，经大小校验。Lite 版跳过。
+// 直链形如：https://hf-mirror.com/zuimengqm/cpusam/resolve/main/<文件名>
+// =============================================================
+val SAM_MODELS = listOf(
+    QnnBinSpec("sam_vit_b_01ec64.encoder.onnx", 359_217_309L), // 343MB
+    QnnBinSpec("sam_vit_b_01ec64.decoder.onnx", 16_500_212L),  // 16MB
+)
+
+fun ensureSamModels() {
+    val dir = rootProject.file("app/src/normal/assets/sam")
+    dir.mkdirs()
+    val repo = "zuimengqm/cpusam"
+    for (spec in SAM_MODELS) {
+        val target = File(dir, spec.name)
+        if (target.exists() && target.length() == spec.sizeBytes) {
+            println("✓ SAM 模型已就绪: ${spec.name}")
+            continue
+        }
+        var downloaded = if (target.exists()) target.length() else 0L
+        var ok = false
+        var lastErr: Exception? = null
+        for (base in QNN_BIN_MIRRORS) {  // 复用 hf-mirror.com / huggingface.co
+            val url = URL("$base/$repo/resolve/main/${spec.name}")
+            var conn: HttpURLConnection? = null
+            try {
+                println("↓ 下载 ${spec.name} (${(spec.sizeBytes / 1048576f).toInt()}MB) <- $base ${if (downloaded > 0) "[续传 ${downloaded / 1048576}MB]" else ""}")
+                val c = url.openConnection() as HttpURLConnection
+                conn = c
+                c.connectTimeout = 30_000
+                c.readTimeout = 180_000
+                c.instanceFollowRedirects = true
+                if (downloaded > 0) c.setRequestProperty("Range", "bytes=$downloaded-")
+                c.connect()
+                val code = c.responseCode
+                if (code !in 200..299 && code != 206) { lastErr = RuntimeException("HTTP $code"); c.disconnect(); continue }
+                val input = c.inputStream
+                val out = FileOutputStream(target, downloaded > 0)
+                val buf = ByteArray(1 shl 16)
+                var total = downloaded
+                var n: Int
+                while (input.read(buf).also { n = it } != -1) { out.write(buf, 0, n); total += n }
+                out.close(); input.close(); c.disconnect()
+                if (target.length() != spec.sizeBytes) { lastErr = RuntimeException("大小校验失败: 期望 ${spec.sizeBytes} 实际 ${target.length()}"); downloaded = target.length(); continue }
+                ok = true
+                println("✓ ${spec.name} 下载完成 (${(target.length() / 1048576f).toInt()}MB)")
+                break
+            } catch (e: Exception) {
+                lastErr = e
+                println("  ✗ $base 失败: ${e.message}")
+                try { conn?.disconnect() } catch (_: Exception) {}
+            }
+        }
+        if (!ok) throw GradleException("SAM 模型下载失败: ${spec.name} -> ${lastErr?.message}")
+    }
+}
+
+tasks.register("downloadSamModels") {
+    group = "build"
+    description = "下载 normal 版 SAM CPU 分割模型（encoder/decoder，hf-mirror 优先）"
+    onlyIf {
+        if (project.hasProperty("skipBinDownload")) {
+            println("  (已通过 -PskipBinDownload 跳过 SAM 模型下载)")
+            false
+        } else {
+            val names = gradle.startParameter.taskNames.joinToString(" ")
+            val isNormal = names.contains("Normal")
+            if (!isNormal) println("  (lite/非 normal 构建，跳过 SAM 模型下载)")
+            isNormal
+        }
+    }
+    doLast { ensureSamModels() }
 }

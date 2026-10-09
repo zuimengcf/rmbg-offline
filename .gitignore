@@ -25,6 +25,8 @@ decode_*.py
 
 # ★ 大体积模型二进制（QNN EPContext 编译产物，不入库；构建时由脚本/HF 拉取）
 app/src/normal/assets/qnn/*.bin
+# ★ SAM 大模型（encoder 343MB / decoder 16MB，不入库；云编译从 zuimengqm/cpusam 拉取）
+app/src/normal/assets/sam/*.onnx
 
 # ★ 签名私钥（务必保密，绝不入库）
 keystore/

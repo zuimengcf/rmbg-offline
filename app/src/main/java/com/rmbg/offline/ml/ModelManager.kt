@@ -50,6 +50,9 @@ object ModelManager {
         val sizeBytes: Long,
         val description: String,
         val kind: ModelKind = ModelKind.CPU,
+        // ---- 直链下载（非 HF 镜像源；GitHub Release / 任意 CDN 直链）----
+        // ★ 非空时云下载直接走该直链（downloadModelFromUrlTo），不走 HF 镜像循环。
+        val directUrl: String? = null,
         // ---- QNN EPContext 专用（kind=QNN 时有效）----
         val assetOnnx: String? = null,      // assets 内 onnx 路径（ep_cache_context 引用 bin 名）
         val assetBin: String? = null,       // assets 内 bin 路径
@@ -59,6 +62,7 @@ object ModelManager {
         val deployBinName: String? = null   // 部署到模型目录后的 bin 文件名（★必须与 onnx 内 ep_cache_context 引用一致）
     ) {
         val isQnn: Boolean get() = kind == ModelKind.QNN
+        val hasDirectUrl: Boolean get() = !directUrl.isNullOrBlank()
     }
 
     /** CPU 模型列表（普通 ONNX，CPU / NNAPI 推理） */
@@ -94,6 +98,25 @@ object ModelManager {
             hfFile = "isnetis.onnx",
             sizeBytes = 176_069_933L,
             description = "动漫人物抠图 · ISNet · 176MB"
+        ),
+        // ★ 量化直链模型（GitHub/HF 直链，不走镜像循环）
+        BuiltinModel(
+            id = "rmbg20_quant",
+            name = "RMBG-2.0 量化",
+            hfRepo = "CVHub520/X-AnyLabeling", // 仅作显示/配置参考，实际走 directUrl
+            hfFile = "bria-rmbg-2.0-quant.onnx",
+            directUrl = "https://github.com/CVHub520/X-AnyLabeling/releases/download/v3.0.0/bria-rmbg-2.0-quant.onnx",
+            sizeBytes = 366_087_549L,
+            description = "BiRefNet 量化 · 349MB · GitHub 直链"
+        ),
+        BuiltinModel(
+            id = "rmbg14_quant",
+            name = "RMBG-1.4 量化",
+            hfRepo = "briaai/RMBG-1.4", // 仅作显示/配置参考，实际走 directUrl
+            hfFile = "onnx/model_quantized.onnx",
+            directUrl = "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx?download=true",
+            sizeBytes = 44_403_226L,
+            description = "RMBG-1.4 量化 · 42MB · HF 直链"
         )
     )
 
@@ -149,7 +172,7 @@ object ModelManager {
             hfFile = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip",
             hfZip = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip",
             sizeBytes = 30_034_102L,
-            description = "4x 超分 · SM8550/V73 QNN HTP · 30MB（512→2048）",
+            description = "4x 超分 · SM8350~SM8850 多型号 QNN HTP · 28-30MB（512→2048）",
             kind = ModelKind.QNN
         )
     )
@@ -423,13 +446,25 @@ object ModelManager {
     /** 内置 CPU 超分资产路径（普通 ONNX，免下载） */
     const val SUPER_RES_CPU_ASSET = "models/realesrgan_anime6b.onnx"
 
+    /** 超分 QNN 各 SoC 变体 → HF zip（仓库已更新：SM8350 int8 / 8450+ fp16 / 8550 fp32） */
+    fun superResZipForSoc(soc: String): String? = when (soc.uppercase()) {
+        "SM8350" -> "qnn/qnn_realesrgan_sm8350_qairt250_512_int8_uint8io.zip"
+        "SM8450" -> "qnn/qnn_realesrgan_sm8450_qairt250_fp16.zip"
+        "SM8550" -> "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip"
+        "SM8650" -> "qnn/qnn_realesrgan_sm8650_qairt250_fp16.zip"
+        "SM8750" -> "qnn/qnn_realesrgan_sm8750_qairt250_fp16.zip"
+        "SM8850" -> "qnn/qnn_realesrgan_sm8850_qairt250_fp16.zip"
+        else -> null   // 未知 SoC / 非骁龙 → 回退内置 CPU 超分
+    }
+
     /** 超分模型部署目录（与抠图隔离：modelDir()/superres/） */
     fun superResDir(): File = File(modelDir(), "superres").apply { mkdirs() }
 
     /**
-     * ★ 超分模型云下载（智能路径）：
-     *  - QNN 可用且当前设备匹配 SM8550 → 从 HF 下载超分 QNN zip（onnx+bin）→ 部署到 superres/ → 返回 onnx 绝对路径
-     *  - 否则（CPU/无 QNN）→ 返回 null（由调用方回退内置 CPU 资产 SUPER_RES_CPU_ASSET，免下载）
+     * ★ 超分模型云下载（智能路径，按设备 SoC 自动匹配）：
+     *  - QNN 可用且当前设备匹配已知 SoC（SM8350/8450/8550/8650/8750/8850）→
+     *    从 HF 下载对应变体 QNN zip（onnx+bin）→ 部署到 superres/ → 返回 onnx 绝对路径
+     *  - 否则（CPU/无 QNN/未知 SoC）→ 返回 null（由调用方回退内置 CPU 资产 SUPER_RES_CPU_ASSET，免下载）
      * @return 部署后的超分 onnx 绝对路径（QNN）；null 表示回退 CPU
      */
     suspend fun downloadSuperResModel(
@@ -443,15 +478,17 @@ object ModelManager {
         if (existing.exists() && existing.length() > 100) {
             return@withContext existing.absolutePath
         }
-        // 设备不匹配 SM8550 → 无法用当前 QNN 超分，返回 null 走 CPU
-        if (!deviceSocModel().uppercase().contains("SM8550")) {
+        // 设备 SoC 匹配 → 下载对应变体；不匹配（未知/CPU）→ 返回 null 走 CPU
+        val soc = deviceSocModel().uppercase()
+        val zip = superResZipForSoc(soc)
+        if (zip == null) {
             return@withContext null
         }
-        val zipDst = File(modelDir(), "qnn_realesrgan_sm8550_qairt250_fp32.zip")
+        val zipDst = File(modelDir(), "qnn_realesrgan_${soc}.zip")
         val ok = downloadModel(
             context = context,
             hfRepo = SUPER_RES_HF_REPO,
-            hfFile = SUPER_RES_HF_ZIP,
+            hfFile = zip,
             destFile = zipDst,
             listener = listener
         )
@@ -478,6 +515,187 @@ object ModelManager {
             dir.listFiles()?.forEach { ok = it.delete() && ok }
             ok
         } catch (_: Exception) { false }
+    }
+
+    // ================= SAM 智能分割模型（CPU ONNX：encoder + decoder 双文件）=================
+    /** SAM 模型目录（modelDir()/sam/，与抠图/超分隔离） */
+    fun samDir(): File = File(modelDir(), "sam").apply { mkdirs() }
+
+    /** SAM encoder 部署文件名 */
+    const val SAM_ENCODER_NAME = "sam_encoder.onnx"
+    /** SAM decoder 部署文件名 */
+    const val SAM_DECODER_NAME = "sam_decoder.onnx"
+
+    /** SAM 模型是否已就绪（encoder + decoder 双文件存在） */
+    fun isSamReady(): Boolean {
+        val e = File(samDir(), SAM_ENCODER_NAME)
+        val d = File(samDir(), SAM_DECODER_NAME)
+        return e.exists() && e.length() > 1_000_000L && d.exists() && d.length() > 1_000_000L
+    }
+
+    /** SAM encoder 文件（未就绪返回 null） */
+    fun samEncoderFile(): File? = File(samDir(), SAM_ENCODER_NAME).takeIf { it.exists() && it.length() > 1_000_000L }
+
+    /** SAM decoder 文件（未就绪返回 null） */
+    fun samDecoderFile(): File? = File(samDir(), SAM_DECODER_NAME).takeIf { it.exists() && it.length() > 1_000_000L }
+
+    /**
+     * ★ 完整版（normal）内置 SAM 模型：首启从 assets 复制到 modelDir/sam/（固定名）。
+     *   正常（normal）flavor 打包 sam_vit_b_01ec64.encoder/decoder.onnx 到 assets/sam/，
+     *   首次使用 SAM 时把二者复制到部署目录，实现「无需外部导入、开箱即用」。
+     *   Lite 精简版不内置（无 assets/sam），本方法直接返回 false，走用户手动导入。
+     * @param context 用于读取 assets
+     * @return 内置模型是否已就位（已存在或复制成功）；lite/无内置返回 false
+     */
+    fun ensureSamFromAssets(context: Context): Boolean {
+        return try {
+            // 已就绪 → 直接返回
+            if (isSamReady()) return true
+            // 仅 normal 内置路径：assets/sam/ 下存在 encoder/decoder
+            val encAsset = "sam/sam_vit_b_01ec64.encoder.onnx"
+            val decAsset = "sam/sam_vit_b_01ec64.decoder.onnx"
+            val encFile = File(samDir(), SAM_ENCODER_NAME)
+            val decFile = File(samDir(), SAM_DECODER_NAME)
+            val aEnc = context.assets.open(encAsset)
+            val aDec = context.assets.open(decAsset)
+            // 复制 encoder（>300MB，先校验源存在）
+            var ok = true
+            runCatching {
+                if (!encFile.exists() || encFile.length() < 300_000_000L) {
+                    encFile.outputStream().use { dst -> aEnc.copyTo(dst) }
+                }
+            }
+            runCatching {
+                if (!decFile.exists() || decFile.length() < 10_000_000L) {
+                    decFile.outputStream().use { dst -> aDec.copyTo(dst) }
+                }
+            }
+            runCatching { aEnc.close() }
+            runCatching { aDec.close() }
+            val ready = encFile.length() > 300_000_000L && decFile.length() > 10_000_000L
+            if (!ready) {
+                android.util.Log.e("RMBG-MODEL", "SAM assets 内置复制后仍不完整: enc=${encFile.length()} dec=${decFile.length()}")
+            }
+            ready
+        } catch (e: Exception) {
+            // 无内置 assets（lite 版）或 assets 缺失/复制失败
+            android.util.Log.w("RMBG-MODEL", "SAM assets 内置复制跳过/失败（lite 或无内置？）", e)
+            isSamReady()
+        }
+    }
+
+    /** 删除 SAM 模型（sam/ 目录） */
+    fun deleteSamModel(): Boolean {
+        return try {
+            val dir = samDir()
+            var ok = true
+            dir.listFiles()?.forEach { ok = it.delete() && ok }
+            ok
+        } catch (_: Exception) { false }
+    }
+    /**
+     * ★ SAM 模型云下载（HF 仓库 zuimengqm/cpusam）。
+     *   供 Lite 精简版（不内置 assets/sam）首次使用智能选区时自动从云端拉取 encoder/decoder。
+     *   Normal 完整版已内置，模型已就绪时本方法直接返回 true（不触发下载）。
+     * @param context 用于初始化模型目录
+     * @param listener ??下载进度回调（可为 null）
+     * @return 是否已就绪（已存在或下载成功）
+     */
+    suspend fun downloadSamModels(
+        context: Context,
+        listener: ProgressListener? = null
+    ): Boolean {
+        // ??已就绪（normal 内置 / 已下载过 / 已导入）??直接返回
+        if (isSamReady()) return true
+        val repo = "zuimengqm/cpusam"
+        val dir = samDir()
+        dir.mkdirs()
+        val mainHandler = Handler(Looper.getMainLooper())
+        // 依次下载 encoder 与 decoder（downloadModel 的 destFile 通道：镜像循环 + 302 + 分块 + 断点续传）
+        val encDst = File(dir, SAM_ENCODER_NAME)
+        val decDst = File(dir, SAM_DECODER_NAME)
+        val files = listOf(
+            Triple("sam_vit_b_01ec64.encoder.onnx", encDst, 300_000_000L),
+            Triple("sam_vit_b_01ec64.decoder.onnx", decDst, 10_000_000L)
+        )
+        for ((hfFile, dst, minValid) in files) {
+            if (dst.exists() && dst.length() >= minValid) continue
+            try {
+                val ok = downloadModel(
+                    context = context,
+                    hfRepo = repo,
+                    hfFile = hfFile,
+                    destFile = dst,
+                    listener = listener
+                )
+                if (!ok || !dst.exists() || dst.length() < minValid) {
+                    mainHandler.post { listener?.onError(RuntimeException("SAM 下载不完整: $hfFile")) }
+                    return false
+                }
+            } catch (e: Exception) {
+                mainHandler.post { listener?.onError(e) }
+                return false
+            }
+        }
+        return isSamReady()
+    }
+
+    /**
+     * SAM 模型从本地 zip 导入 + 部署。
+     * 解压 zip，把 encoder.onnx / decoder.onnx 提取到 sam/ 目录（固定名 sam_encoder.onnx / sam_decoder.onnx）。
+     * ★ 兼容模型包：Meta SAM ViT-B 官方 ONNX（sam_vit_b_01ec64.encoder/decoder.onnx）或任意包含
+     *   encoder.onnx + decoder.onnx 的 zip（自动按文件名关键词识别，找不到则用前两个最大的 .onnx）。
+     * @param zipFile 用户选择的 zip（SAF 拷贝到缓存后传入）
+     * @return 是否部署成功
+     */
+    fun importSamModelZip(zipFile: File): Boolean {
+        if (!zipFile.exists()) return false
+        val destDir = samDir()
+        val tmpDir = File(zipFile.parentFile ?: cacheDirForImport(), "sam_zip_import_${System.currentTimeMillis()}")
+        return try {
+            tmpDir.mkdirs()
+            // 1) 解压全部（限制总量 1GB 防 zip 炸弹）
+            var totalBytes = 0L
+            java.util.zip.ZipFile(zipFile).use { zf ->
+                val entries = zf.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    totalBytes += entry.size
+                    if (totalBytes > 1L * 1024 * 1024 * 1024) return@importSamModelZip false
+                    val baseName = entry.name.substringAfterLast('/').substringAfterLast('\\')
+                    if (baseName.isEmpty()) continue
+                    val outFile = File(tmpDir, baseName)
+                    zf.getInputStream(entry).use { input -> outFile.outputStream().use { out -> input.copyTo(out) } }
+                }
+            }
+            // 2) 找 encoder/decoder：按文件名关键词优先，否则取最大的两个 onnx
+            val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) }
+                ?.sortedByDescending { it.length() } ?: emptyList()
+            if (onnxFiles.isEmpty()) return@importSamModelZip false
+            val encSrc = onnxFiles.firstOrNull { it.name.contains("encoder", true) && !it.name.contains("decoder", true) }
+                ?: onnxFiles.getOrNull(0)
+            val decSrc = onnxFiles.firstOrNull { it.name.contains("decoder", true) && !it.name.contains("encoder", true) }
+                ?: onnxFiles.getOrNull(1) ?: onnxFiles.firstOrNull()
+            if (encSrc == null || decSrc == null || encSrc === decSrc) return@importSamModelZip false
+            // 3) 部署（固定名）
+            val encDst = File(destDir, SAM_ENCODER_NAME)
+            val decDst = File(destDir, SAM_DECODER_NAME)
+            encSrc.copyTo(encDst, overwrite = true)
+            decSrc.copyTo(decDst, overwrite = true)
+            // 4) 校验：encoder > 300MB，decoder > 10MB
+            val ok = encDst.length() > 300_000_000L && decDst.length() > 10_000_000L
+            if (!ok) {
+                try { encDst.delete() } catch (_: Exception) {}
+                try { decDst.delete() } catch (_: Exception) {}
+            }
+            ok
+        } catch (e: Exception) {
+            android.util.Log.e("RMBG-MODEL", "SAM zip 导入失败", e)
+            false
+        } finally {
+            try { tmpDir.deleteRecursively() } catch (_: Exception) {}
+        }
     }
 
     // ================= Anime-Seg 多 NPU 变体下载（按设备 SoC 自动匹配）=================
@@ -2104,6 +2322,117 @@ object ModelManager {
             // ⑥ 切换自定义模型标记，走 CPU 链路
             selectedModelId = CUSTOM_MODEL_ID
             mainHandler.post { listener?.onDone(target) }
+            return@withContext true
+        } catch (e: Exception) {
+            mainHandler.post { listener?.onError(e) }
+            return@withContext false
+        }
+    }
+
+    /**
+     * ★ 从任意直链下载 ONNX 到指定目标文件（内置 directUrl 模型专用）。
+     *   与 downloadModelFromUrl 的区别：
+     *   - 可指定 destFile（默认 model_<id>.onnx），不强制切换 selectedModelId=custom_model；
+     *   - 兼容 .onnx / .zip（zip 内提取首个 .onnx）。
+     * @param url 完整下载链接（http/https，GitHub Release / HF resolve / 任意 CDN）
+     * @param destFile 下载目标（推荐 File(modelDir(), "model_<id>.onnx")）
+     * @return 是否成功
+     */
+    suspend fun downloadModelFromUrlTo(
+        context: Context,
+        url: String,
+        destFile: File,
+        listener: ProgressListener? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        initContext(context)
+        val dir = modelDir().also { it.mkdirs() }
+        val zipDst = File(dir, "dl_tmp_${System.currentTimeMillis()}.zip")
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val client = buildClient()
+
+        // 请求构建（带 HF Token，gated/私有托管可能需要）
+        fun buildReq(u: String): Request {
+            val b = Request.Builder().url(u)
+            if (hfToken.isNotBlank()) b.header("Authorization", "Bearer $hfToken")
+            return b.build()
+        }
+
+        try {
+            // ① 手动解析重定向（client 已关自动跟随）拿到真实下载 URL
+            var realUrl = url
+            try {
+                client.newCall(buildReq(url)).execute().use { p ->
+                    if (p.code == 302 || p.code == 307 || p.code == 308) {
+                        p.header("Location")?.takeIf { it.startsWith("http") }?.let { realUrl = it }
+                    }
+                }
+            } catch (_: Exception) { /* 直接用 url */ }
+
+            // ② 探测总大小（Range: bytes=0-0 对真实下载 URL 生效，206 + Content-Range）
+            val probeReq = buildReq(realUrl).newBuilder().header("Range", "bytes=0-0").build()
+            var totalBytes = 0L
+            try {
+                client.newCall(probeReq).execute().use { resp ->
+                    if (resp.isSuccessful || resp.code == 206) {
+                        val cr = resp.header("Content-Range")
+                        totalBytes = cr?.substringAfter('/')?.toLongOrNull()
+                            ?: resp.body?.contentLength() ?: 0L
+                    } else {
+                        mainHandler.post { listener?.onError(IllegalStateException("HTTP ${resp.code}")) }
+                        return@withContext false
+                    }
+                }
+            } catch (e: Exception) {
+                mainHandler.post { listener?.onError(e) }
+                return@withContext false
+            }
+            if (totalBytes < 100L) {
+                mainHandler.post { listener?.onError(IllegalStateException("文件过小或无效链接")) }
+                return@withContext false
+            }
+
+            // ③ 断点续传：已有完整目标文件则跳过
+            if (destFile.exists() && destFile.length() >= totalBytes) {
+                mainHandler.post { listener?.onDone(destFile) }
+                return@withContext true
+            }
+
+            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range）
+            val partBase = "dl_tmp_${System.currentTimeMillis()}"
+            val downloadedAll = downloadChunks(
+                client = client, baseUrl = realUrl, totalBytes = totalBytes,
+                dir = dir, partPrefix = partBase, token = hfToken,
+                threads = DOWNLOAD_THREADS,
+                onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
+            )
+            if (downloadedAll < totalBytes) {
+                mainHandler.post { listener?.onError(IllegalStateException("下载不完整")) }
+                return@withContext false
+            }
+            // 合并分块 → 临时完整文件
+            mergeChunks(dir, partBase, totalBytes, zipDst)
+
+            // ⑤ 单 .onnx 直接 rename；.zip 解压提取 .onnx
+            val ok: Boolean
+            val lower = url.lowercase()
+            val isZipMagic = try {
+                val head = zipDst.inputStream().use { it.readNBytes(4) }
+                head.size == 4 && head[0] == 0x50.toByte() && head[1] == 0x4B.toByte()
+            } catch (_: Exception) { false }
+            if (zipDst.length() >= 100_000L && (lower.endsWith(".zip") || isZipMagic)) {
+                ok = unzipCustomModel(zipDst, destFile)
+            } else {
+                destFile.delete()
+                ok = zipDst.renameTo(destFile) || zipDst.copyTo(destFile, overwrite = true).let { true }
+            }
+            zipDst.delete()
+
+            if (!ok || !destFile.exists()) {
+                mainHandler.post { listener?.onError(IllegalStateException("模型文件处理失败")) }
+                return@withContext false
+            }
+            mainHandler.post { listener?.onDone(destFile) }
             return@withContext true
         } catch (e: Exception) {
             mainHandler.post { listener?.onError(e) }
