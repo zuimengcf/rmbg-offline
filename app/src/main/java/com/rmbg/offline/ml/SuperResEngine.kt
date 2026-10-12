@@ -129,7 +129,9 @@ class SuperResEngine(
                     if (qnnDevices.isEmpty()) {
                         throw RuntimeException("QNN EP 设备未找到")
                     }
-                    addExecutionProvider(listOf(qnnDevices.first()), mapOf(
+                    // ★★ 必须传全部 QNN 设备（ORT_QNN_ENABLE_CPU_BACKEND=1 下暴露 CPU READY + HTP 两个设备，
+                    //   只取 first() 会取到错误 backend 导致 EPContext "not compatible"）
+                    addExecutionProvider(qnnDevices, mapOf(
                         "backend_type" to "htp",
                         "htp_performance_mode" to "burst",
                         "htp_graph_finalization_optimization_mode" to "3",
@@ -219,9 +221,17 @@ class SuperResEngine(
             val c = android.graphics.Canvas(canvas)
             c.drawColor(android.graphics.Color.WHITE) // 白底 padding
             c.drawBitmap(scaled, padL.toFloat(), padT.toFloat(), null)
+            // ★ 只回收降采样副本（scaled 和上一级 work，若 work 是降采样得来），
+            //   绝不回收输入 src（它可能是 viewerBitmap/resultBitmap/originalBitmap，回收即导致
+            //   "Canvas: trying to use a recycled bitmap" 崩溃）。
+            //   注意：旧逻辑 `if (canvas !== work) work.recycle()` 在小图场景 work===src 时会误回收输入，
+            //   必须先让 work 指向 canvas 再回收中间副本。
             if (scaled !== work) scaled.recycle()
-            if (canvas !== work) work.recycle()
-            work = canvas
+            val oldWork = work          // 记录回收前的 work（可能是 src 或降采样副本）
+            work = canvas               // ★ 先切换 work 到新 letterbox 画布
+            if (oldWork !== src && oldWork !== canvas && !oldWork.isRecycled) {
+                oldWork.recycle()
+            }
         } else {
             inW = work.width; inH = work.height
         }

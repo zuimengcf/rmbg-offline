@@ -62,7 +62,7 @@ object Prefs {
         set(v) = sp(OperitApp.appContext).edit().putFloat("threshold", v).apply()
 
     var tileMode: Boolean
-        get() = sp(OperitApp.appContext).getBoolean("tile_mode", true)
+        get() = sp(OperitApp.appContext).getBoolean("tile_mode", false)
         set(v) = sp(OperitApp.appContext).edit().putBoolean("tile_mode", v).apply()
 
     /** 极速模式：缩小分辨率快速抠图（与精细抠图并存，不冲突） */
@@ -104,6 +104,17 @@ object Prefs {
     var autoSaveResult: Boolean
         get() = sp(OperitApp.appContext).getBoolean("auto_save_result", true)
         set(v) = sp(OperitApp.appContext).edit().putBoolean("auto_save_result", v).apply()
+
+    /** 接受分享后自动抠图（勾选后从系统分享导入图片即自动开始抠图，默认关） */
+    var autoCutoutOnShare: Boolean
+        get() = sp(OperitApp.appContext).getBoolean("auto_cutout_on_share", false)
+        set(v) = sp(OperitApp.appContext).edit().putBoolean("auto_cutout_on_share", v).apply()
+
+    /** ★ 历史记录开关（默认开）：关闭后不再自动记录新历史（已有历史保留、不清空）。
+     *  仅影响【自动新增历史】；查看器/后处理对已有记录的更新（updateResult）不受影响。 */
+    var enableHistory: Boolean
+        get() = sp(OperitApp.appContext).getBoolean("enable_history", true)
+        set(v) = sp(OperitApp.appContext).edit().putBoolean("enable_history", v).apply()
 
     /** 查看器背景色（棋盘/白色/黑色/浅灰/绿色） */
     var viewerBgColor: String

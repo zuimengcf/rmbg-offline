@@ -1233,26 +1233,28 @@ fun PostProcessScreen(
                                                         val p1 = press[1]
                                                         val dist = (p0.position - p1.position).getDistance()
                                                         val prevDist = (p0.previousPosition - p1.previousPosition).getDistance()
+                                                        // ★ 中心位移（两指中心从上一帧到当前帧的移动）：缩放和平移共用，只计算一次
+                                                        val prevCx = (p0.previousPosition.x + p1.previousPosition.x) / 2f
+                                                        val prevCy = (p0.previousPosition.y + p1.previousPosition.y) / 2f
+                                                        val cx = (p0.position.x + p1.position.x) / 2f
+                                                        val cy = (p0.position.y + p1.position.y) / 2f
                                                         if (prevDist > 0f) {
                                                             val newScale = (scale * dist / prevDist).coerceIn(1f, 8f)
-                                                            val centerX = (p0.position.x + p1.position.x) / 2f
-                                                            val centerY = (p0.position.y + p1.position.y) / 2f
                                                             val imgW_old = bw * fitS * scale
                                                             val imgH_old = bh * fitS * scale
                                                             val effL = cw / 2f - imgW_old / 2f + offset.x
                                                             val effT = ch / 2f - imgH_old / 2f + offset.y
                                                             val imgW_new = bw * fitS * newScale
                                                             val imgH_new = bh * fitS * newScale
+                                                            // ★ 缩放围绕【上一帧两指中心】(prevCx,prevCy) 锚定，保持该点对应同一图像像素；
+                                                            //   之后只叠加一次中心位移 (cx-prevCx)。旧版用当前帧中心缩放再叠加位移 → 双重平移，锚点漂移。
                                                             offset = Offset(
-                                                                centerX - (centerX - effL) * (newScale / scale) - cw / 2f + imgW_new / 2f,
-                                                                centerY - (centerY - effT) * (newScale / scale) - ch / 2f + imgH_new / 2f
+                                                                prevCx - (prevCx - effL) * (newScale / scale) - cw / 2f + imgW_new / 2f,
+                                                                prevCy - (prevCy - effT) * (newScale / scale) - ch / 2f + imgH_new / 2f
                                                             )
                                                             scale = newScale
                                                         }
-                                                        val prevCx = (p0.previousPosition.x + p1.previousPosition.x) / 2f
-                                                        val prevCy = (p0.previousPosition.y + p1.previousPosition.y) / 2f
-                                                        val cx = (p0.position.x + p1.position.x) / 2f
-                                                        val cy = (p0.position.y + p1.position.y) / 2f
+                                                        // ★ 只叠加一次中心位移（跟随两指中心移动而平移）
                                                         offset = offset + Offset(cx - prevCx, cy - prevCy)
                                                     }
                                                 }
@@ -1314,13 +1316,37 @@ fun PostProcessScreen(
                             brushMode -> Modifier
                             // 后处理模式：双指缩放/平移（★ 调色/参数浮层打开时不响应，防透传到页面）
                             else -> Modifier.pointerInput(showPostColor, showPostControls, Unit) {
-                                detectTransformGestures { _, pan, zoom, _ ->
+                                // ★ 修复：后处理 graphicsLayer 的 transformOrigin=(0,0)，缩放围绕【图像左上角固定原点】，
+                                //   图像左上屏幕位置 L = baseLeft + offset.x 且【不随 scale 变】（不是"居中"模型！）。
+                                //   detectTransformGestures 提供 centroid（两指质心），围绕它锚定：
+                                //   质心对应图像坐标 x=(cx-L)/pt  缩放后保持：L' = cx - (cx-L)*(new/old)，offset=L'-baseLeft。
+                                //   旧版忽略 centroid + 用"居中半宽"公式 → 缩放以左上角原点，完全不围绕两指中心，观感偏移左上。
+                                detectTransformGestures { centroid, pan, zoom, _ ->
                                     // 浮层打开时忽略手势，避免点击穿透到后处理页
                                     if (showPostColor || showPostControls) return@detectTransformGestures
                                     val prevScale = scale
                                     val newScale = (prevScale * zoom).coerceIn(1f, 8f)
-                                    offset = offset + pan
-                                    scale = newScale
+                                    val nw = size.width.toFloat()
+                                    val nh = size.height.toFloat()
+                                    val bw = displayBitmap.width.toFloat()
+                                    val bh = displayBitmap.height.toFloat()
+                                    val fitS = min(nw / bw, nh / bh)
+                                    val fitW = bw * fitS
+                                    val fitH = bh * fitS
+                                    val baseLeft = nw / 2f - fitW / 2f
+                                    val baseTop = nh / 2f - fitH / 2f
+                                    // 当前图像左上屏幕位置（transformOrigin=左上角固定，不随 scale 变）
+                                    val L = baseLeft + offset.x
+                                    val T = baseTop + offset.y
+                                    if (newScale != prevScale) {
+                                        // 围绕质心 centroid 锚定，保持质心图像素不动
+                                        val nx = centroid.x - (centroid.x - L) * (newScale / prevScale)
+                                        val ny = centroid.y - (centroid.y - T) * (newScale / prevScale)
+                                        offset = Offset(nx - baseLeft, ny - baseTop)
+                                        scale = newScale
+                                    } else {
+                                        offset = offset + pan
+                                    }
                                 }
                             }
                         }

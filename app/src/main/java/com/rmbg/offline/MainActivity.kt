@@ -69,12 +69,19 @@ import com.rmbg.offline.ml.LocalDreamClient
 import com.rmbg.offline.ml.ModelManager
 import com.rmbg.offline.ml.RmbgOnnxEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.text.DecimalFormat
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import kotlin.math.roundToInt
 
 /** 最近一次抠图保存到历史的结果 PNG 文件（分享复用磁盘文件，避免重新编码） */
@@ -85,6 +92,33 @@ private var latestHistoryFile: File? = null
 private const val ZIP_AI_REDRAW = 1   // 含 unet.bin → Stable Diffusion AI 重绘模型
 private const val ZIP_MATTING = 2     // 含 .onnx(+.bin) → 抠图 QNN/ONNX 模型
 private const val ZIP_UNKNOWN = 0     // 无法识别
+
+/** 从分享 Intent 解析图片 URI（ACTION_SEND 单图 / ACTION_SEND_MULTIPLE 多图）。
+ *  兼容 API 33+（ParcelableExtra）与旧版本，供 onCreate / onNewIntent 复用。 */
+private fun parseSharedUris(intent: Intent?): List<Uri> {
+    val action = intent?.action ?: return emptyList()
+    return when (action) {
+        Intent.ACTION_SEND -> {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                val u = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                if (u != null) listOf(u) else emptyList()
+            } else {
+                @Suppress("DEPRECATION")
+                val u = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                if (u != null) listOf(u) else emptyList()
+            }
+        }
+        Intent.ACTION_SEND_MULTIPLE -> {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java) ?: emptyList()
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: emptyList()
+            }
+        }
+        else -> emptyList()
+    }
+}
 
 /** ★ 探测 zip 包内容：只列条目名（不读取内容，1GB 包扫描快），判断模型包类型 */
 private fun probeZipKind(zipFile: File): Int {
@@ -108,7 +142,7 @@ private fun probeZipKind(zipFile: File): Int {
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 class MainActivity : ComponentActivity() {
 
-    /** 后台时释放引擎，降低常驻内存防被杀 */
+    /** 后台时释放引擎，降低常驻内存防被杀（用户确认：离开 App 就销毁引擎，除非正在推理） */
     override fun onStop() {
         super.onStop()
         try {
@@ -128,29 +162,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 支持系统分享图片导入（ACTION_SEND 单图 / ACTION_SEND_MULTIPLE 多图批量）
-        val sharedUris: List<Uri> = when (intent?.action) {
-            Intent.ACTION_SEND -> {
-                if (android.os.Build.VERSION.SDK_INT >= 33) {
-                    val u = intent?.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                    if (u != null) listOf(u) else emptyList()
-                } else {
-                    @Suppress("DEPRECATION")
-                    val u = intent?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-                    if (u != null) listOf(u) else emptyList()
-                }
-            }
-            Intent.ACTION_SEND_MULTIPLE -> {
-                if (android.os.Build.VERSION.SDK_INT >= 33) {
-                    intent?.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                        ?: emptyList()
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent?.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-                        ?: emptyList()
-                }
-            }
-            else -> emptyList()
-        }
+        val sharedUris: List<Uri> = parseSharedUris(intent)
 
         // 模型目录初始化 + 旧模型迁移（内部→外部）
         ModelManager.initContext(this)
@@ -164,11 +176,26 @@ class MainActivity : ComponentActivity() {
             RmbgScreen(sharedUris)
         }
     }
+
+    /** ★★ singleTask 复用实例时接收新分享图，放入共享队列供运行中的 Compose 消费。
+     *   （不新建 Activity 实例 → 杜绝旧图与新图双实例叠加"两张图合并"） */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val uris = parseSharedUris(intent)
+        if (uris.isNotEmpty()) {
+            RmbgScreenState.pendingSharedUris = uris
+        }
+    }
 }
 
 object RmbgScreenState {
     @Volatile
     var engine: com.rmbg.offline.ml.RmbgOnnxEngine? = null
+
+    // ★★ 分享导入单例队列：singleTask 复用同一实例后，onNewIntent 把新 URI 放这里，
+    //   运行中的 Compose 通过产生式订阅并消费（App 前台分享不再新建 Activity 实例，杜绝双实例叠加"两张图合并"）。
+    @Volatile
+    var pendingSharedUris: List<Uri> = emptyList()
 }
 
 // ===== 关于页（独立二级页面）=====
@@ -258,6 +285,16 @@ private fun AboutPage(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("更新日志", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                ChangelogRow("v1.3.0", listOf(
+                    "导入导出：历史记录与应用配置一键备份/还原，模型导出",
+                    "模型功能：本地模型导入、云端下载、智能匹配设备加速",
+                    "历史记录：历史分支管理、多视图浏览、批量保存",
+                    "分享功能：系统分享导入/导出，接受分享后可选自动抠图"
+                ))
+                ChangelogRow("v1.2.0", listOf(
+                    "通知功能：抠图完成常驻通知提醒",
+                    "后台保活：防止模型加载后被系统回收"
+                ))
                 ChangelogRow("v1.1.2", listOf(
                     "超分模型云下载：按设备 SoC/NPU 自动匹配对应版本（QNN HTP / CPU 自适应）",
                     "Anime-Seg 支持多 NPU 变体，按设备自动选择下载链接",
@@ -384,6 +421,287 @@ private fun ChangelogRow(version: String, items: List<String>) {
     }
 }
 
+// ===== 导出 / 导入页（完整模型列表选择 + 历史/配置备份）=====
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ExportPage(
+    context: android.content.Context,
+    onBack: () -> Unit,
+    onExportModel: (modelName: String, files: List<File>) -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
+    backupBusy: Boolean,
+    backupProgress: Float,
+    backupProgressText: String,
+    modelExportBusy: Boolean
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF5F7FA))
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // 顶部：返回 + 标题
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("导出 / 导入", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+
+        // ===== 历史 + 配置备份 =====
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("历史 + 配置备份", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(
+                        formatSize(BackupManager.dirSize(BackupManager.historyDir(context))),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    "全部抠图历史记录 + 应用设置（模型/抠图参数/加速/预设等）打包为一个 zip，可随时导回。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onExportBackup,
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !backupBusy
+                    ) {
+                        Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导出备份")
+                    }
+                    OutlinedButton(
+                        onClick = onImportBackup,
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !backupBusy
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导入还原")
+                    }
+                }
+                if (backupBusy) {
+                    LinearProgressIndicator(
+                        progress = { backupProgress },
+                        modifier = Modifier.fillMaxWidth().height(6.dp)
+                    )
+                    if (backupProgressText.isNotEmpty()) {
+                        Text(
+                            backupProgressText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // ===== 模型导出（逐个单独导出）=====
+        Text(
+            "模型导出（逐个单独导出）",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        Text(
+            "选择下方任意一个已就绪的模型，点「导出」保存为独立文件（QNN/本地模型含 bin 时打包为 zip）。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // ---- CPU 内置模型 ----
+        val modelDir = ModelManager.modelDir()
+        ModelManager.cpuModels.forEach { bm ->
+            val ready = ModelManager.isBuiltinModelDownloaded(bm)
+            val onnxFile = File(modelDir, "model_${bm.id}.onnx")
+            val hasFile = ready && onnxFile.exists()
+            ExportModelRow(
+                title = bm.name,
+                subtitle = "内置 CPU 模型 · ${bm.description}",
+                ready = hasFile,
+                size = if (hasFile) onnxFile.length() else bm.sizeBytes,
+                enabled = hasFile && !modelExportBusy,
+                onExport = { onExportModel(bm.name, listOf(onnxFile)) }
+            )
+        }
+
+        // ---- QNN 内置模型 ----
+        ModelManager.qnnModels.forEach { bm ->
+            // ★ 超分模型（qnn_realesrgan）已在下方"超分模型"分区单独展示，这里跳过避免重复
+            if (bm.id == "qnn_realesrgan") return@forEach
+            val ready = ModelManager.isBuiltinModelDownloaded(bm)
+            val onnxF = ModelManager.qnnContextFileFor(bm.id)
+            val binF = ModelManager.qnnContextBinFileFor(bm.id)
+            val files = listOfNotNull(onnxF?.takeIf { it.exists() && it.length() > 0 }, binF?.takeIf { it.exists() && it.length() > 0 })
+            ExportModelRow(
+                title = bm.name,
+                subtitle = "内置 QNN 模型（骁龙 DSP）" + if (bm.description.isNotEmpty()) " · ${bm.description}" else "",
+                ready = ready && files.isNotEmpty(),
+                size = files.sumOf { it.length() },
+                enabled = ready && files.isNotEmpty() && !modelExportBusy,
+                onExport = { onExportModel(bm.name, files) }
+            )
+        }
+
+        // ---- 本地导入模型 ----
+        val locals = ModelManager.localModels()
+        if (locals.isNotEmpty()) {
+            locals.forEach { lm ->
+                val f = File(modelDir, lm.fileName)
+                // ★ 配套 bin（EPContext）：导出时一并带上
+                val binRef = runCatching { ModelManager.extractEpCacheContext(f) }.getOrNull()
+                val binF = binRef?.let { File(modelDir, it) }?.takeIf { it.exists() && it.length() > 0 }
+                val files = listOfNotNull(f.takeIf { it.exists() && it.length() > 0 }, binF)
+                ExportModelRow(
+                    title = lm.displayName,
+                    subtitle = "本地导入模型 · ${formatSize(lm.sizeBytes)}" + if (binF != null) "（含 QNN bin）" else "",
+                    ready = files.isNotEmpty(),
+                    size = files.sumOf { it.length() },
+                    enabled = files.isNotEmpty() && !modelExportBusy,
+                    onExport = { onExportModel(lm.displayName, files) }
+                )
+            }
+        }
+
+        // ---- 超分模型 ----
+        val srDir = ModelManager.superResDir()
+        val srFiles = srDir.listFiles()?.filter { it.isFile && it.length() > 0 } ?: emptyList()
+        val srReady = com.rmbg.offline.Prefs.superResModelPath.isNotEmpty() ||
+            srFiles.any { it.name == "superres_model.onnx" }
+        ExportModelRow(
+            title = "超分模型",
+            subtitle = if (srFiles.isNotEmpty()) "QNN/CPU 超分模型文件 · ${srFiles.map { it.name }.joinToString(" + ")}" else "未导入自定义超分模型（使用内置 CPU 超分）",
+            ready = srReady && srFiles.isNotEmpty(),
+            size = srFiles.sumOf { it.length() },
+            enabled = srReady && srFiles.isNotEmpty() && !modelExportBusy,
+            onExport = { onExportModel("superres", srFiles) }
+        )
+
+        // ---- SAM 模型 ----
+        val samDir = ModelManager.samDir()
+        val samFiles = samDir.listFiles()?.filter { it.isFile && it.length() > 0 } ?: emptyList()
+        val samReady = ModelManager.isSamReady()
+        ExportModelRow(
+            title = "SAM 智能分割模型",
+            subtitle = if (samFiles.isNotEmpty()) "encoder + decoder · ${samFiles.map { it.name }.joinToString(" + ")}" else "未部署 SAM 模型",
+            ready = samReady && samFiles.isNotEmpty(),
+            size = samFiles.sumOf { it.length() },
+            enabled = samReady && samFiles.isNotEmpty() && !modelExportBusy,
+            onExport = { onExportModel("sam", samFiles) }
+        )
+
+        // ---- AI 重绘部署模型（可选，通常 1GB+）----
+        val deployedRedraw = AiRedrawEngine.deployedModels(context)
+        if (deployedRedraw.isNotEmpty()) {
+            Text(
+                "AI 重绘模型（大文件，谨慎选择）",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF7B1FA2),
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            deployedRedraw.forEach { id ->
+                val dir = File(File(context.filesDir, "models"), id)
+                val files = dir.listFiles()?.filter { it.isFile && it.length() > 0 } ?: emptyList()
+                val size = files.sumOf { it.length() }
+                ExportModelRow(
+                    title = id,
+                    subtitle = "AI 重绘部署模型 · ${formatSize(size)}",
+                    ready = files.isNotEmpty(),
+                    size = size,
+                    enabled = files.isNotEmpty() && !modelExportBusy,
+                    onExport = { onExportModel(id, files) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** 导出页内单个模型导出行 */
+@Composable
+private fun ExportModelRow(
+    title: String,
+    subtitle: String,
+    ready: Boolean,
+    size: Long,
+    enabled: Boolean,
+    onExport: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (ready) Icons.Filled.CheckCircle else Icons.Filled.Info,
+                contentDescription = null,
+                tint = if (ready) Color(0xFF2E7D32) else Color(0xFF9E9E9E),
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    formatSize(size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+            OutlinedButton(
+                onClick = onExport,
+                enabled = enabled,
+                modifier = Modifier.height(36.dp),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp)
+            ) {
+                Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (ready) "导出" else "未就绪", fontSize = 13.sp)
+            }
+        }
+    }
+}
+
 /** 高级编辑 · 快捷切模型（临时切换）恢复信息：重抠完成后自动恢复主模型配置 */
 data class QuickModelRestore(
     val id: String,          // 主模型 id
@@ -446,7 +764,23 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
     }
     ModelManager.selectedModelId = restoredModelIdSafe
+    // ★ 模型就位：内置 CPU 模型（anime_seg 等含 assetPath 的）→ 首启从 assets 拷贝到模型目录（离线可用）；
+    //   QNN 模型（onnx 头内置、bin 云下载）→ 由 ensureQnnContextDual 双轨部署；其余走下载逻辑。
     var modelReady by remember { mutableStateOf(ModelManager.isModelDownloaded()) }
+    android.util.Log.i("RMBG-MODEL", "默认模型=${restoredModelIdSafe} QNN支持=${ModelManager.isQnnSupported(context)} modelReady=$modelReady")
+    // ★ 内置 CPU 模型部署状态（转圈动画用）：true=正在从 assets 释放大模型；完成后置 false 并刷新。
+    var cpuDeploying by remember { mutableStateOf(false) }
+    // 内置 CPU 模型：确保从 assets 完成首启部署。★ 放到 IO 线程避免 176MB 拷贝阻塞主线程导致卡死；
+    //   部署期间置 cpuDeploying=true+initialStatus 提示，完成后置 false、刷新 modelReady。
+    LaunchedEffect(restoredModelIdSafe) {
+        val selBm = ModelManager.builtinModels.find { it.id == restoredModelIdSafe }
+        if (selBm != null && !selBm.isQnn && selBm.assetPath != null) {
+            cpuDeploying = true
+            val ok = withContext(Dispatchers.IO) { ModelManager.ensureCpuModelFromAssets(context, restoredModelIdSafe) }
+            if (ok) modelReady = true
+            cpuDeploying = false
+        }
+    }
     // ★ 默认状态文案：按当前选中模型动态生成（QNN 模型=部署，CPU 模型=下载，体积取真实值）
     val initialStatus = if (modelReady) {
         "模型已就绪，选择图片开始抠图"
@@ -454,6 +788,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         val curBm = ModelManager.builtinModels.find { it.id == restoredModelIdSafe }
         if (curBm?.isQnn == true) {
             "需要部署 ${curBm.name}（约${curBm.sizeBytes / 1024 / 1024}MB，点击部署）"
+        } else if (curBm?.assetPath != null) {
+            "正在就位内置 ${curBm.name}（首次启动需释放到本地）"
         } else {
             "需要下载模型（约${(curBm?.sizeBytes ?: 176_153_355L) / 1024 / 1024}MB）"
         }
@@ -522,13 +858,24 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var keepAlive by remember { mutableStateOf(Prefs.keepAlive) }
     // ★ 自动保存抠图结果开关（默认开；勾选后首次抠图即自动保存 原图→结果 到历史/相册）
     var autoSaveResult by remember { mutableStateOf(Prefs.autoSaveResult) }
+    // ★ 历史记录开关（默认开）：关闭后不再自动记录新历史（已有历史保留、不清空）
+    var enableHistory by remember { mutableStateOf(Prefs.enableHistory) }
+    // ★ 接受分享后自动抠图开关（默认关）：系统分享导入图片后自动触发抠图
+    var autoCutoutOnShare by remember { mutableStateOf(Prefs.autoCutoutOnShare) }
+    // ★ 分享自动抠图触发计数：importImages 导入分享图后自增，下方 LaunchedEffect 观察并调用 runRmbg()
+    //   （runRmbg 定义在 importImages 之后，局部函数不能前向引用，用计数解耦）
+    var autoCutoutRequest by remember { mutableIntStateOf(0) }
     var tileProgress by remember { mutableStateOf(0f) }
     var tileProgressText by remember { mutableStateOf("") }
     var isTiling by remember { mutableStateOf(false) }
     var currentTab by remember { mutableStateOf(0) }
     // ★ 关于页：独立二级页面（设置 Tab 的"关于"卡片点击后进入）
     var showAboutPage by remember { mutableStateOf(false) }
+    // ★ 导出页：独立二级页面（设置 Tab 的"数据备份/导出"卡片点击后进入）
+    var showExportPage by remember { mutableStateOf(false) }
     var historyVersion by remember { mutableStateOf(0) }
+    // ★ 历史保存 Job：分享/杀会话/退出前先 join 确认历史已落盘，防"记录消失"（保存协程被取消）
+    var historySaveJob by remember { mutableStateOf<Job?>(null) }
     // ★ 历史预加载：produceState 提升到 if 外层，切 Tab 不销毁、不重新加载。
     //   historyVersion 变化时自动重查（HistoryManager 内部有磁盘缓存，命中时直接返回）。
     val rawHistory by produceState<List<HistoryManager.HistoryItem>?>(initialValue = null, historyVersion) {
@@ -653,6 +1000,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     // ★ 高级编辑 · 区域重绘运行中（AreaSelectScreen 内"AI 区域重绘"按钮执行中，禁止重复触发）
     var aiRedrawAreaRunning by remember { mutableStateOf(false) }
 
+    // ---- 导出 / 导入（备份）状态 ----
+    // ★ 历史+配置导出中 / 导入中的标志（按钮禁用 + Toast 提示）
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupProgress by remember { mutableStateOf(0f) }
+    var backupProgressText by remember { mutableStateOf("") }
+    // ★ 模型导出中标志（区分导出的具体模型 id）
+    var modelExportBusy by remember { mutableStateOf(false) }
+
     // ---- 撤销/前进（结果位图历史栈）----
     val undoStack = remember { mutableStateListOf<Bitmap>() }   // 已撤销/可重做的状态
     val redoStack = remember { mutableStateListOf<Bitmap>() }   // 撤销出的状态（可前进）
@@ -769,11 +1124,11 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             if (up != null && !up.isRecycled && up.width > 0) {
                 // ★ 不入历史：直接替换查看器显示图；记录当前尺寸用于 UI 提示 + 防重复超分
                 superResLastW = up.width; superResLastH = up.height
-                // 旧 viewerBitmap 若非历史加载，回收旧图避免泄漏（历史图不回收，它由历史栈持有）
-                val old = viewerBitmap
-                if (old != null && old !== cur && old !== up && old.isRecycled.not() && viewerItem == null) {
-                    try { old.recycle() } catch (_: Exception) {}
-                }
+                // ★ 旧 viewerBitmap 不再手动回收（交由 GC）：
+                //   1) Compose 重组是异步的，回收后若仍有帧在绘制旧图会闪退（recycled bitmap used）。
+                //   2) 旧图可能是 resultBitmap / originalBitmap / viewerOriginBitmap 的引用，
+                //      手动回收会连带破坏主界面/查看器显示。
+                //   3) Android API 19+ 手动 recycle 非必需，旧图失去引用后 GC 会自动释放 native 内存。
                 viewerBitmap = up
                 statusText = "已 4x 超分：${up.width}×${up.height}（临时图，不写入历史，可保存/分享）"
                 Toast.makeText(context, "已 4x 超分 ${up.width}×${up.height}", Toast.LENGTH_SHORT).show()
@@ -806,39 +1161,77 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
     }
 
-    // ★ QNN 自动加载（双轨）：内置 QNN 模型的 onnx+bin 打包在 APK assets 内（离线兜底）；
-    //   选中任一 QNN 模型时先尝试 assets 部署，assets 缺失/损坏则自动走 HF 仓库下载（下载型）。
-    //   ensureQnnContextDual 内部：assets 优先 → 不足则 HF 下载 onnx+bin。
+    // ★ QNN / 内置 CPU 模型自动加载：仅做【本地资产部署】（assets 拷贝），绝不在启动/选中时联网下载。
+    //   - QNN：ensureQnnContext 只从 assets 拷贝 onnx+bin；bin 未内置/缺失时不下载，置为"未就绪"，
+    //     需要用户手动点「部署/重新部署」按钮（startDownload → ensureQnnContextDual）才会联网下载。
+    //   - CPU：ensureCpuModelFromAssets 从 assets 拷贝内置模型，离线就位。
+    //   ★ 全部放 IO 线程：ensure* 会拷贝数十~百MB资产到模型目录，主线程做会卡死模型页。
     LaunchedEffect(selectedBuiltinId) {
         val selBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
-        if (selBm?.isQnn == true) {
-            val deployed = ModelManager.ensureQnnContextDual(context, selBm.id)
+        if (selBm != null && (selBm.isQnn || selBm.assetPath != null)) {
+            val deployed = withContext(Dispatchers.IO) {
+                if (selBm.isQnn) ModelManager.ensureQnnContext(context, selBm.id)
+                else ModelManager.ensureCpuModelFromAssets(context, selBm.id)
+            }
             modelReady = deployed && ModelManager.isModelDownloaded()
-            statusText = if (modelReady) "模型已就绪，选择图片开始抠图" else "${selBm.name} 部署失败，可点重新部署"
+            statusText = if (modelReady) "模型已就绪，选择图片开始抠图"
+                else if (selBm.isQnn) "${selBm.name} 未就绪（bin 未内置，可点「重新部署」联网下载）"
+                else "${selBm.name} 内置模型就位失败"
+        }
+    }
+// ---- 导入图片（选图 / 系统分享共用同一入口，行为完全一致）----
+    // ★ 分享图与选图走完全相同的导入方法：设置原图 / 历史分支 / 批量队列 / 工程存档 / 提示文案。
+    //   杜绝分享入口单独一套逻辑造成的行为差异（如引擎状态、会话挤占）。
+    fun importImages(uris: List<Uri>, origin: String) {
+        if (uris.isEmpty()) return
+        scope.launch {
+            // ★ 解码搬到 IO 线程：分享/选图导入大图不再阻塞主线程，杜绝掉帧卡顿
+            val bmps = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri ->
+                    try { decodeBitmap(context, uri) } catch (_: Exception) { null }
+                }
+            }
+            if (bmps.isEmpty()) {
+                Toast.makeText(context, if (origin == "share") "导入分享图片失败" else "没有可用的图片", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            originalBitmap = bmps.first()
+            resultBitmap = null
+            // ★ 新图开新历史分支
+            currentHistoryKey = computeOriginalKey(bmps.first())
+            batchQueue = bmps.drop(1)
+            batchIndex = 0
+            // ★ 工程存档也搬到 IO，避免写盘阻塞主线程
+            withContext(Dispatchers.IO) { ProjectStateManager.save(context, bmps.first(), null) }
+            // ★ 小图提示：分享/选图进入的图分辨率过低（短边 < 256）时，
+            //   提示可先超分提升画质（超分引擎固定 输入≤512→输出≤2048，小图收益最大；同时也利于抠图精度）。
+            val smallSide = minOf(bmps.first().width, bmps.first().height)
+            val isSmall = smallSide < 256
+            statusText = if (bmps.size > 1)
+                "已导入 ${bmps.size} 张图片，点击立即抠图批量处理"
+            else if (origin == "share")
+                if (isSmall) "已导入小图分享（${smallSide}px），可先查看并超分提升画质，点击抠图"
+                else "已导入分享图片，点击抠图开始处理"
+            else
+                if (isSmall) "已选择小图（${smallSide}px），可先查看并超分提升画质，点击抠图"
+                else "已选择图片，点击立即抠图"
+            Toast.makeText(
+                context,
+                if (bmps.size > 1) "已导入 ${bmps.size} 张图片"
+                else if (isSmall) "小图已导入（${smallSide}px），建议先超分提升画质"
+                else if (origin == "share") "已导入分享图片"
+                else "已选择图片",
+                Toast.LENGTH_LONG
+            ).show()
+            // ★ 接受分享后自动抠图：系统分享导入且开关开启 → 导入完成后自增计数，由下方 LaunchedEffect 触发 runRmbg()
+            if (origin == "share" && autoCutoutOnShare) {
+                autoCutoutRequest++
+            }
         }
     }
 
+    // ★ App 启动初始化：KeepAlive / 通知权限 / AI 重绘模型恢复 / 历史预加载（与分享处理分开）
     LaunchedEffect(Unit) {
-        if (sharedUris.isNotEmpty()) {
-            val bmps = sharedUris.mapNotNull { uri ->
-                try { decodeBitmap(context, uri) } catch (_: Exception) { null }
-            }
-            if (bmps.isNotEmpty()) {
-                originalBitmap = bmps.first()
-                resultBitmap = null
-                // ★ 新图开新历史分支
-                currentHistoryKey = computeOriginalKey(bmps.first())
-                batchQueue = bmps.drop(1)
-                batchIndex = 0
-                ProjectStateManager.save(context, bmps.first(), null)
-                statusText = if (bmps.size > 1)
-                    "已导入 ${bmps.size} 张图片，点击立即抠图批量处理"
-                else "已导入分享图片，点击抠图开始处理"
-                Toast.makeText(context, if (bmps.size > 1) "已导入 ${bmps.size} 张图片" else "已导入分享图片", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "导入分享图片失败", Toast.LENGTH_LONG).show()
-            }
-        }
         if (Prefs.keepAlive) {
             try { KeepAliveService.start(context) } catch (_: Exception) {}
         }
@@ -898,6 +1291,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
 
     // ---- 引擎（懒加载，绑定全局引用供 onStop 释放）----
     var engine by remember { mutableStateOf(RmbgScreenState.engine) }
+
     fun getEngine(): com.rmbg.offline.ml.RmbgOnnxEngine {
         val target = ModelManager.modelFile
         val cached = engine
@@ -909,12 +1303,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
         try { cached?.close() } catch (_: Exception) {}
         val selBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
-        // ★ QNN 自动加载：与主界面 LaunchedEffect 一致，统一走【双轨】ensureQnnContextDual
-        //   （assets 兜底优先，缺失/损坏时自动走 HF 仓库下载，兼容 zip 交付的多-新模型）。
-        //   此前用旧单轨 ensureQnnContext（仅 assets），对 zip/HF 交付模型（无 assetOnnx/assetBin）
-        //   返回 false → load 时 QNN 不可用抛异常 → 区域抠图报"模型未加载"，此处已对齐修复。
+        // ★ 加载引擎前仅做【本地资产部署】（assets 拷贝），绝不在抠图时联网下载——
+        //   与主界面 LaunchedEffect 一致：用户需先在模型页手动点「部署/重新部署」联网下载 QNN bin。
+        //   这里只确保 assets 内的 onnx/bin（内置 QNN）或内置 CPU 资产已拷到模型目录。
         if (selBm?.isQnn == true) {
-            runBlocking { withContext(Dispatchers.IO) { ModelManager.ensureQnnContextDual(context, selBm.id) } }
+            runBlocking { withContext(Dispatchers.IO) { ModelManager.ensureQnnContext(context, selBm.id) } }
+        } else if (selBm?.assetPath != null) {
+            // ★ 内置 CPU 模型（如 anime_seg）：抠图前确保从 assets 就位（离线可用）
+            ModelManager.ensureCpuModelFromAssets(context, selBm.id)
         }
         val e = com.rmbg.offline.ml.RmbgOnnxEngine(
             target,
@@ -933,26 +1329,35 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         return e
     }
 
+    // ---- 分享进入（恢复最初逻辑：直接导入图片，不做会话竞态特设处理）----
+    // ★★ singleTask + onNewIntent：App 前台再分享不再新建 Activity，而是写入 RmbgScreenState.pendingSharedUris。
+    //   这里启动一次性消费循环：先导初始 sharedUris，再持续监听队列，每次新分享都导入并替换（而非叠加）。
+    LaunchedEffect(Unit) {
+        suspend fun consume(uris: List<Uri>) {
+            if (uris.isEmpty()) return
+            // ★ 先等历史保存落盘完成（防"退出/分享后记录消失"的独立修复，保留），再直接导入
+            historySaveJob?.join()
+            importImages(uris, "share")
+        }
+        consume(sharedUris)
+        while (true) {
+            val pending = RmbgScreenState.pendingSharedUris
+            if (pending.isNotEmpty()) {
+                // ★ 取走并清空：保证不重复导入、不叠加旧图
+                RmbgScreenState.pendingSharedUris = emptyList()
+                consume(pending)
+            }
+            kotlinx.coroutines.delay(300)
+        }
+    }
+
     // ---- 选图（支持多选批量）----
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        val bmps = uris.mapNotNull { uri ->
-            try { decodeBitmap(context, uri) } catch (_: Exception) { null }
-        }
-        if (bmps.isEmpty()) {
-            Toast.makeText(context, "没有可用的图片", Toast.LENGTH_SHORT).show()
-            return@rememberLauncherForActivityResult
-        }
-        originalBitmap = bmps.first()
-        resultBitmap = null
-        // ★ 新图开新历史分支
-        currentHistoryKey = computeOriginalKey(bmps.first())
-        batchQueue = bmps.drop(1)
-        batchIndex = 0
-        ProjectStateManager.save(context, bmps.first(), null)
-        statusText = if (bmps.size > 1) "已选 ${bmps.size} 张图片，点击立即抠图逐张处理" else "已选择图片，点击立即抠图"
+        // ★ 与系统分享共用同一导入方法：行为完全一致
+        importImages(uris, "picker")
     }
 
     // ---- 保存 ----
@@ -1279,6 +1684,138 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             }
         }
     }
+
+    // ---- 备份 / 导出（历史+配置 zip）----
+    // ★ CreateDocument 由系统 SAF 选择保存位置与文件名；回调拿到 uri 后写 zip
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            backupBusy = true
+            backupProgress = 0f
+            backupProgressText = "正在压缩历史与配置..."
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        BackupManager.exportHistoryAndPrefs(
+                            context, os,
+                            progress = object : BackupManager.Progress {
+                                override fun onProgress(bytesDone: Long, totalBytes: Long) {
+                                    val p = if (totalBytes > 0) bytesDone.toFloat() / totalBytes else 0f
+                                    // ★ Compose snapshot state 线程安全，可直接从 IO 线程赋值触发重组
+                                    backupProgress = p
+                                    backupProgressText = "压缩中 ${formatSize(bytesDone)} / ${if (totalBytes > 0) formatSize(totalBytes) else "?"}"
+                                }
+                            }
+                        )
+                    } ?: false
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-BACKUP", "导出失败", e)
+                    false
+                }
+            }
+            backupBusy = false
+            backupProgressText = ""
+            Toast.makeText(
+                context,
+                if (ok) "已导出：历史 + 配置备份" else "导出失败，请重试",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // ---- 备份 / 导入（历史+配置 zip 还原）----
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            backupBusy = true
+            backupProgress = 0f
+            backupProgressText = "正在导入备份..."
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        BackupManager.importHistoryAndPrefs(context, ZipInputStream(input))
+                    } ?: false
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-BACKUP", "导入失败", e)
+                    false
+                }
+            }
+            backupBusy = false
+            backupProgressText = ""
+            if (ok) {
+                // ★ 导入成功：刷新历史列表 + 工程状态（避免旧缓存）
+                HistoryManager.invalidateHistoryCache()
+                historyVersion++
+                // ★ 同步 UI 开关状态：备份 settings.json 可能改写了历史记录/自动保存相册开关，
+                //   让界面立刻反映还原后的开关值（否则要重启才生效）
+                enableHistory = Prefs.enableHistory
+                autoSaveResult = Prefs.autoSaveResult
+                enableNnapi = Prefs.enableNnapi
+                enableQnn = Prefs.enableQnn
+                onnxThreads = Prefs.onnxThreads
+                keepAlive = Prefs.keepAlive
+                Toast.makeText(context, "已导入：历史 + 配置已还原", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "导入失败：请确认是有效的备份 zip", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // ---- 单个模型导出（模型只能一个一个单独导出）----
+    // ★ 待导出模型描述：点击各模型行的导出按钮时先记录，SAF 回调里再真正写文件。
+    //   asZip=true → onnx+bin 打包 zip；asZip=false → 单 onnx 直接复制
+    var pendingModelExport by remember {
+        mutableStateOf<Pair<String, List<File>>?>(null)  // (显示名, 文件列表)
+    }
+    val exportModelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        val pending = pendingModelExport ?: return@rememberLauncherForActivityResult
+        pendingModelExport = null
+        uri ?: return@rememberLauncherForActivityResult
+        val displayName = pending.first
+        val files = pending.second
+        scope.launch {
+            modelExportBusy = true
+            backupProgressText = "正在导出模型：$displayName ..."
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        val validFiles = files.filter { it.exists() && it.isFile && it.length() > 0 }
+                        if (validFiles.isEmpty()) return@use false
+                        // ★ 多文件（onnx+bin）→ zip；单文件（onnx）→ 直接复制
+                        if (validFiles.size == 1 && !validFiles[0].name.endsWith(".zip", true)) {
+                            validFiles[0].inputStream().use { ins -> ins.copyTo(os) }
+                        } else {
+                            ZipOutputStream(os).use { zos ->
+                                validFiles.forEach { f ->
+                                    zos.putNextEntry(ZipEntry(f.name))
+                                    f.inputStream().use { ins -> ins.copyTo(zos) }
+                                    zos.closeEntry()
+                                }
+                            }
+                        }
+                        true
+                    } ?: false
+                } catch (e: Exception) {
+                    android.util.Log.e("RMBG-MODEL", "导出模型失败", e)
+                    false
+                }
+            }
+            modelExportBusy = false
+            backupProgressText = ""
+            Toast.makeText(
+                context,
+                if (ok) "已导出模型：$displayName" else "导出失败：$displayName",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     // ---- 下载模型 ----
     fun startDownload() {
         if (isDownloading) return
@@ -1293,32 +1830,54 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             ModelManager.resetCancel()
             downloadingJob = scope.launch {
                 isDownloading = true
+                // ★ 启动下载前台服务：App 退后台也能继续下载
+                DownloadService.start(context)
                 statusText = "正在部署 ${selBm.name}（内置优先，不足时联网下载）..."
-                // 双轨：assets 内置兜底 → 缺失则走 HF 仓库下载 onnx+bin
+                // ★ 初始化进度卡 UI：总大小用该模型元数据（避免启动时兜底显示 168MB）
+                downloadProgress = 0f
+                downloadSpeed = 0L
+                downloadBytes = 0L
+                downloadTotal = selBm.sizeBytes
+                activeMirrorName = null
                 val ok = ModelManager.ensureQnnContextDual(
                     context, qnnId,
                     listener = object : ModelManager.ProgressListener {
                         override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
                             statusText = "下载中 ${selBm.name}：${bytesDownloaded / 1024 / 1024}/${totalBytes / 1024 / 1024}MB"
+                            // ★ 同步到进度卡 UI（QNN 下载也走进度条卡显示）
+                            downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes else 0f
+                            downloadSpeed = speedBps
+                            downloadBytes = bytesDownloaded
+                            downloadTotal = totalBytes
+                            // ★ 刷新下载前台服务心跳（有进度 = 有任务，防止 10 分钟超时自杀）
+                            DownloadService.kick(context)
                         }
-
                         override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
                             statusText = "正在从 $mirrorName 下载 ${selBm.name} ..."
                         }
-
                         override fun onMirrorError(mirrorName: String, error: String) {
                             statusText = "$mirrorName 下载失败：$error"
                         }
-
-                        override fun onDone(file: File) {}
-
+                        override fun onDone(file: File) {
+                            // ★ 下载/部署完成：关闭下载前台服务 + 发送完成通知（此前缺失，用户反馈无完成通知）
+                            downloadingJob = null
+                            isDownloading = false
+                            DownloadService.stop(context)
+                            Notifications.cancelDownloadNotification(context)
+                            Notifications.notifyDownloadDone(context, "${selBm.name} 已下载", "点击开始抠图")
+                        }
                         override fun onError(e: Exception) {
                             statusText = "下载错误：${e.message ?: e.javaClass.simpleName}"
+                            downloadingJob = null
+                            isDownloading = false
+                            DownloadService.stop(context)
                         }
                     }
                 )
                 downloadingJob = null
                 isDownloading = false
+                // ★ 停止下载前台服务（下载/部署结束）
+                DownloadService.stop(context)
                 if (ok) {
                     modelReady = ModelManager.isModelDownloaded()
                     statusText = "${selBm.name} 已就绪，选择图片开始抠图"
@@ -1347,10 +1906,12 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         ModelManager.resetCancel()
         downloadingJob = scope.launch {
             isDownloading = true
+            // ★ 启动下载前台服务：App 退后台也能继续下载
+            DownloadService.start(context)
             downloadProgress = 0f
             downloadSpeed = 0L
             downloadBytes = 0L
-            downloadTotal = 0L
+            downloadTotal = selBmForDl?.sizeBytes ?: 0L
             statusText = "正在下载模型..."
             activeMirrorName = null
             // ★ 直链模型（directUrl）走 downloadModelFromUrlTo（GitHub/HF 直链，不支持镜像循环）；
@@ -1367,6 +1928,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             downloadBytes = bytesDownloaded
                             downloadTotal = totalBytes
                             statusText = "下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB..."
+                            // ★ 系统通知栏：进度更新
+                            Notifications.notifyDownloadProgress(context, "正在下载 ${selBmForDl?.name ?: "模型"}…", bytesDownloaded, totalBytes, speedBps)
+                            DownloadService.kick(context)
                         }
                         override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
                             activeMirrorName = mirrorName
@@ -1379,14 +1943,19 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         override fun onDone(file: File) {
                             downloadingJob = null
                             modelReady = true
+                            DownloadService.stop(context)
                             isDownloading = false
                             statusText = "模型下载完成！选择图片开始抠图"
+                            Notifications.cancelDownloadNotification(context)
+                            Notifications.notifyDownloadDone(context, "${selBmForDl?.name ?: "模型"}已下载", "点击开始抠图")
                             Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
                         }
                         override fun onError(e: Exception) {
                             downloadingJob = null
                             isDownloading = false
                             activeMirrorName = null
+                            Notifications.cancelDownloadNotification(context)
+                            DownloadService.stop(context)
                             statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
                             if (ModelManager.isCancelRequested())
                                 Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
@@ -1405,6 +1974,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             downloadBytes = bytesDownloaded
                             downloadTotal = totalBytes
                             statusText = "下载中..."
+                            // ★ 系统通知栏：进度更新
+                            Notifications.notifyDownloadProgress(context, "正在下载 ${selBmForDl?.name ?: "模型"}…", bytesDownloaded, totalBytes, speedBps)
+                            DownloadService.kick(context)
                         }
                         override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
                             activeMirrorName = mirrorName
@@ -1417,14 +1989,19 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         override fun onDone(file: File) {
                             downloadingJob = null
                             modelReady = true
+                            DownloadService.stop(context)
                             isDownloading = false
                             statusText = "模型下载完成！选择图片开始抠图"
+                            Notifications.cancelDownloadNotification(context)
+                            Notifications.notifyDownloadDone(context, "${selBmForDl?.name ?: "模型"}已下载", "点击开始抠图")
                             Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
                         }
                         override fun onError(e: Exception) {
                             downloadingJob = null
                             isDownloading = false
                             activeMirrorName = null
+                            Notifications.cancelDownloadNotification(context)
+                            DownloadService.stop(context)
                             statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
                             if (ModelManager.isCancelRequested())
                                 Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
@@ -1445,6 +2022,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         downloadingJob?.cancel()
         downloadingJob = null
         isDownloading = false
+        // ★ 取消下载 → 停止下载前台服务
+        DownloadService.stop(context)
         statusText = "下载已取消"
         Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
     }
@@ -1672,7 +2251,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     currentHistoryKey = computeOriginalKey(bmp)
                     val t0 = System.currentTimeMillis()
                     val turbo = turboMode
-                    val useTiling = !turbo && (bmp.width > 1024 || bmp.height > 1024)
+                    // ★ 分块严格遵循设置里的「精细抠图（大图分块）」开关（tileMode）；
+                    //   不再按尺寸自动触发分块拼接（默认关闭 → 大图走整体缩放推理，避免拼接痕迹）
+                    val useTiling = !turbo && tileMode
                     isTiling = useTiling
                     tileProgress = 0f
                     statusText = if (total > 1) "正在抠图（$curNum/$total）..." else "正在抠图..."
@@ -1680,14 +2261,30 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     val e = withContext(Dispatchers.IO) {
                         val eng = getEngine()
                         if (turbo) {
-                            val scaleF = 768f / maxOf(bmp.width, bmp.height)
-                            val sw = maxOf(1, (bmp.width * scaleF).toInt())
-                            val sh = maxOf(1, (bmp.height * scaleF).toInt())
-                            val small = Bitmap.createScaledBitmap(bmp, sw, sh, true)
-                            val smallResult = eng.removeBackground(small, threshold, tileMode = false)
-                            small.recycle()
-                            Bitmap.createScaledBitmap(smallResult, bmp.width, bmp.height, true)
-                                .also { smallResult.recycle() }
+                            // ★ 极速模式审查修复：
+                            //   原实现无条件缩到最长边 768（scaleF=768/max边），有两大缺陷：
+                            //   ① 原图已≤768 时 scaleF≥1，会【放大】小图再抠再放大 → 既不加速还降质；
+                            //   ② 极端纵横比长图（如 1000×20000）被按最长轴压到 ~38px 宽，细节全丢。
+                            //   修复：仅当最长边>768 才降采样；并给最短边设下限（≥256，对齐引擎 MIN_INPUT_SIDE），
+                            //   避免极长图被过度压扁；图已≤768 或最短边≤下限时直接整图抠（本来就不大，极速无意义）。
+                            val w = bmp.width
+                            val h = bmp.height
+                            val maxSide = maxOf(w, h)
+                            val minSide = minOf(w, h)
+                            if (maxSide > 768 && minSide >= 256) {
+                                // 降采样到「最长边=768，且保持纵横比」，同时保证最短边≥128，避免长图过扁
+                                val scale = 768f / maxSide
+                                val sw = maxOf(128, (w * scale).toInt())
+                                val sh = maxOf(128, (h * scale).toInt())
+                                val small = Bitmap.createScaledBitmap(bmp, sw, sh, true)
+                                val smallResult = eng.removeBackground(small, threshold, tileMode = false)
+                                small.recycle()
+                                Bitmap.createScaledBitmap(smallResult, w, h, true)
+                                    .also { smallResult.recycle() }
+                            } else {
+                                // 原图已足够小（≤768）或极端长条：直接整图抠，避免无意义的放大/压扁
+                                eng.removeBackground(bmp, threshold, tileMode = false)
+                            }
                         } else {
                             eng.removeBackground(bmp, threshold, useTiling) { done, totalT ->
                                 // ★ 分块间检查停止：允许用户中途取消长图分块推理
@@ -1723,30 +2320,46 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         enableNnapi -> "NNAPI"
                         else -> "CPU"
                     }
-                    scope.launch {
-                        withContext(Dispatchers.IO) {
+                    // ★ 历史保存 Job 可追踪：分享/杀会话/退出前 join 确认落盘，防"记录消失"
+                    historySaveJob = scope.launch {
+                        // ★ NonCancellable：即使 Activity 销毁/scope 被取消，也保证历史文件写完落盘
+                        //   （否则异步未落盘就杀会话/退出 → 记录消失）
+                        withContext(NonCancellable + Dispatchers.IO) {
                             try {
-                                // ★ 自动保存开关：开启时仅保存每张原图的【第一次】抠图结果（原图→结果配对）
-                                //   同一原图再次抠图不再重复自动入历史；关闭时结果仅留在当前界面
-                                if (autoSaveResult) {
+                                // ★ 历史记录开关：关闭后不再自动记录新历史（仅此入口为"自动新增"，受控）
+                                if (enableHistory) {
+                                    // ★ 历史自动记录：每张原图的【每次】抠图结果都自动入历史，
+                                    //   同一 originalKey 归入同一组 → 原图下可保存不同分支（A→B→C 同一棵树）。
+                                    //   （此前"仅首次"门槛会让原图下只能有一条记录，无法看多次抠图的分支差异，已移除。）
                                     val key = currentHistoryKey.ifBlank { computeOriginalKey(bmp) }
-                                    // 该原图已有历史记录 → 不重复自动保存（除非用户手动保存/手动入历史）
-                                    val exists = HistoryManager.getHistory(context)
-                                        .any { it.originalKey.isNotEmpty() && it.originalKey == key }
-                                    if (!exists) {
-                                        HistoryManager.saveResult(
-                                            context, e,
-                                            original = bmp, // ★ 保存原图副本，供恢复画笔取原背景色
-                                            modelName = curModelName,
-                                            durationMs = elapsedMs,
-                                            accel = curAccel,
-                                            turbo = turbo,
-                                            // ★ 用当前会话分支 key（继承：再次抠图归原图分支；新图/下一张已重算）
-                                            originalKey = key
-                                        )?.let { it -> latestHistoryFile = File(context.filesDir, "history/${it.fileName}") }
+                                    // ★ 相册防重复：每张原图仅【首次】自动保存到相册（后续分支不重复存相册，
+                                    //   避免相册堆积大量同源图）；历史记录本身每次照常写入。
+                                    // ★ 用 saveToRmbgFolderNamed 拿相册文件名，供 markSavedToAlbum 记录到 meta，
+                                    //   保证查看器"删除图片"能精确定位（此前用返回 Boolean 的 saveToRmbgFolder
+                                    //   丢文件名 → album_file 空 → 删除时"未记录文件名"）。
+                                    val albumFileName = if (autoSaveResult) {
+                                        val groupSaved = HistoryManager.getHistory(context)
+                                            .any { it.originalKey.isNotEmpty() && it.originalKey == key && it.savedToAlbum }
+                                        if (!groupSaved) {
+                                            runCatching { saveToRmbgFolderNamed(context, e) }.getOrNull()
+                                        } else null
+                                    } else null
+                                    HistoryManager.saveResult(
+                                        context, e,
+                                        original = bmp, // ★ 保存原图副本，供恢复画笔取原背景色
+                                        modelName = curModelName,
+                                        durationMs = elapsedMs,
+                                        accel = curAccel,
+                                        turbo = turbo,
+                                        // ★ 用当前会话分支 key（继承：再次抠图归原图分支；新图/下一张已重算）
+                                        originalKey = key
+                                    )?.let { saved ->
+                                        latestHistoryFile = File(context.filesDir, "history/${saved.fileName}")
+                                        // ★ 相册保存成功 → 标记历史记录已存相册（防重复保存 + UI 显示），并记录相册文件名供删除定位
+                                        if (!albumFileName.isNullOrEmpty()) HistoryManager.markSavedToAlbum(context, saved, albumFileName)
                                     }
                                 }
-                                // ★ 工程持久化与自动保存开关无关：始终保存，供下次打开恢复会话
+                                // ★ 工程持久化与历史/相册开关无关：始终保存，供下次打开恢复会话
                                 ProjectStateManager.save(context, bmp, e)
                             } catch (_: Exception) {}
                         }
@@ -1795,12 +2408,20 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         }
     }
 
+    // ★ 接受分享后自动抠图观察器：importImages 导入分享图后自增 autoCutoutRequest，
+    //   这里在 runRmbg 定义之后监听，计数变化即触发 runRmbg()（避开局部函数前向引用限制）
+    LaunchedEffect(autoCutoutRequest) {
+        if (autoCutoutRequest > 0 && autoCutoutOnShare) {
+            runRmbg()
+        }
+    }
+
     // ---- UI ----
     Scaffold(
         containerColor = Color(0xFFF5F7FA),
         bottomBar = {
             // ★ 关于页等全屏覆盖层显示时隐藏底栏（避免露出底部导航）
-            if (!showAboutPage && !showEditor && !showPostProcessScreen) {
+            if (!showAboutPage && !showExportPage && !showEditor && !showPostProcessScreen) {
                 NavigationBar(
                 containerColor = Color(0xFFFFFFFF),
                 tonalElevation = 3.dp
@@ -1838,6 +2459,34 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             AboutPage(
                 context = context,
                 onBack = { showAboutPage = false }
+            )
+            return@Scaffold
+        }
+        // ★ 导出页：独立二级页面（完整模型列表选择 + 历史/配置备份）
+        if (showExportPage) {
+            ExportPage(
+                context = context,
+                onBack = { showExportPage = false },
+                // 模型导出：设置待导出模型 → 启动 SAF 保存
+                onExportModel = { modelName, files ->
+                    pendingModelExport = modelName to files
+                    exportModelLauncher.launch(
+                        if (files.size > 1) "rmbg_model_${modelName.replace(Regex("[^A-Za-z0-9_-]"), "_")}.zip"
+                        else files.firstOrNull()?.name ?: "rmbg_model.onnx"
+                    )
+                },
+                // 历史+配置备份导出
+                onExportBackup = {
+                    exportBackupLauncher.launch("rmbg_backup_${System.currentTimeMillis()}.zip")
+                },
+                // 历史+配置备份导入
+                onImportBackup = {
+                    importBackupLauncher.launch("*/*")
+                },
+                backupBusy = backupBusy,
+                backupProgress = backupProgress,
+                backupProgressText = backupProgressText,
+                modelExportBusy = modelExportBusy
             )
             return@Scaffold
         }
@@ -1921,7 +2570,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    "${formatSize(downloadBytes)} / ${formatSize(if (downloadTotal > 0) downloadTotal else (ModelManager.builtinModels.find { it.id == selectedBuiltinId }?.sizeBytes ?: 176_153_355L))}",
+                                    "${formatSize(downloadBytes)} / ${formatSize(if (downloadTotal > 0) downloadTotal else (ModelManager.builtinModels.find { it.id == selectedBuiltinId }?.sizeBytes ?: downloadBytes))}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2036,11 +2685,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
 
             // ===== Tab 1: 模型 =====
             if (currentTab == 1) {
-            // ★ 模型页卡顿优化：内置模型下载状态 / 已部署重绘列表 都是磁盘 IO（File.exists/listFiles），
-            //   每次重组都重算会卡。这里只绑定版本号，版本不变直接复用缓存，重组零 IO。
-            val builtinReadyCache = remember(builtinModelsVersion) {
-                ModelManager.builtinModels.associate { it.id to ModelManager.isBuiltinModelDownloaded(it) }
-            }
+            // ★ 内置模型下载状态 / 已部署重绘列表 涉及磁盘 IO（File.exists/listFiles）。
+            //   ★★ 关键修复：这里【不做 remember 缓存】，每次切换到模型页都实时读取磁盘状态——
+            //      内置模型仅 6~7 个，isBuiltinModelDownloaded 的 File.exists/length 开销微秒级，不会卡。
+            //      此前用 remember(builtinModelsVersion, cpuDeploying) 缓存会在首次组合时把当时状态锁死，
+            //      若部署完成时序晚于首次计算，文件已就位但缓存不重算 → 打开模型页仍显示"未下载"，
+            //      必须点击触发 key 变化才刷新——这正是用户反复反馈"要点击一次"的根因。
+            //      （会真正卡死的是 ensureCpuModelFromAssets 在主线程拷贝176MB，那已移到 IO 线程，与本缓存无关）
+            val builtinReadyCache = ModelManager.builtinModels.associate { it.id to ModelManager.isBuiltinModelDownloaded(it) }
             val localModelCache = remember(localModelsVersion) { ModelManager.localModels() }
             // ★ 已部署 AI 重绘模型列表（IO 重：listFiles 扫 models 目录；仅版本号变化时重扫）
             val deployedModelCache = remember(deployedModelsVersion, aiModelZipReady) {
@@ -2187,7 +2839,17 @@ Card(
                                 Spacer(Modifier.width(4.dp))
                                 // 状态徽标 + 下载/删除操作
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    if (bmReady) {
+                                    if (cpuDeploying && !bmReady) {
+                                        // ★ 内置 CPU 模型正在从 assets 释放（176MB 拷贝中）→ 转圈动画，替代"未下载"
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(14.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("部署中", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                                        }
+                                    } else if (bmReady) {
                                         Text("✅ 已下载", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                                     } else {
                                         Text("未下载", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
@@ -2239,11 +2901,17 @@ Card(
                                                                     downloadBytes = bytesDownloaded
                                                                     downloadTotal = totalBytes
                                                                     statusText = "下载中 ${bytesDownloaded / 1024 / 1024}/${if (totalBytes > 0) totalBytes / 1024 / 1024 else "?"}MB..."
+                                                                    // ★ 系统通知栏：进度更新
+                                                                    Notifications.notifyDownloadProgress(context, "正在下载 ${bm.name}…", bytesDownloaded, totalBytes, speedBps)
                                                                 }
                                                                 override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) { activeMirrorName = mirrorName }
                                                                 override fun onMirrorError(mirrorName: String, error: String) { activeMirrorName = null }
-                                                                override fun onDone(file: File) {}
+                                                                override fun onDone(file: File) {
+                                                                    Notifications.cancelDownloadNotification(context)
+                                                                    Notifications.notifyDownloadDone(context, "${bm.name}已下载", "点击开始抠图")
+                                                                }
                                                                 override fun onError(e: Exception) {
+                                                                    Notifications.cancelDownloadNotification(context)
                                                                     statusText = "${bm.name} 下载失败: ${e.message ?: "未知错误"}"
                                                                 }
                                                             }
@@ -2257,6 +2925,8 @@ Card(
                                                                     downloadSpeed = speedBps
                                                                     downloadBytes = bytesDownloaded
                                                                     downloadTotal = totalBytes
+                                                                    // ★ 系统通知栏：进度更新
+                                                                    Notifications.notifyDownloadProgress(context, "正在下载 ${bm.name}…", bytesDownloaded, totalBytes, speedBps)
                                                                 }
                                                                 override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
                                                                     activeMirrorName = mirrorName
@@ -2265,8 +2935,12 @@ Card(
                                                                 override fun onMirrorError(mirrorName: String, error: String) {
                                                                     activeMirrorName = null
                                                                 }
-                                                                override fun onDone(file: File) {}
+                                                                override fun onDone(file: File) {
+                                                                    Notifications.cancelDownloadNotification(context)
+                                                                    Notifications.notifyDownloadDone(context, "${bm.name}已下载", "点击开始抠图")
+                                                                }
                                                                 override fun onError(e: Exception) {
+                                                                    Notifications.cancelDownloadNotification(context)
                                                                     statusText = "${bm.name} 下载失败: ${e.message ?: "未知错误"}"
                                                                 }
                                                             }
@@ -3435,7 +4109,7 @@ Card(
                 }
             }
 
-            // ===== 自动保存 =====
+            // ===== 历史记录 & 自动保存 =====
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
                 shape = RoundedCornerShape(16.dp)
@@ -3445,33 +4119,75 @@ Card(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("历史记录", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        // ★ 历史记录开关：关闭后不再自动记录新历史（已有历史保留、不清空）
+                        Switch(
+                            checked = enableHistory,
+                            onCheckedChange = {
+                                enableHistory = it
+                                Prefs.enableHistory = it
+                                Toast.makeText(
+                                    context,
+                                    if (it) "已开启历史记录" else "已关闭历史记录（已有记录保留，不再新增）",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        )
+                    }
+                    Text(
+                        if (enableHistory)
+                            "抠图完成后自动把 原图→结果 存入历史"
+                        else "历史记录已关闭：不再自动新增记录，已有历史保留、不会清空",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Save, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("自动保存", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("自动保存抠图结果", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                            Text(
-                                if (autoSaveResult)
-                                    "抠图完成后自动把 原图→结果 存入历史，无需手动保存"
-                                else "关闭后抠图结果仅留在当前界面，不自动入历史",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text("自动保存到相册", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
                         Switch(
                             checked = autoSaveResult,
                             onCheckedChange = {
                                 autoSaveResult = it
                                 Prefs.autoSaveResult = it
-                                Toast.makeText(context, if (it) "已开启自动保存" else "已关闭自动保存", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) "已开启自动保存到相册" else "已关闭自动保存到相册", Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
+                    Text(
+                        if (autoSaveResult)
+                            "抠图完成后自动把结果保存到系统相册"
+                        else "关闭后不自动保存到相册；历史记录不受影响",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("接受分享后自动抠图", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        Switch(
+                            checked = autoCutoutOnShare,
+                            onCheckedChange = {
+                                autoCutoutOnShare = it
+                                Prefs.autoCutoutOnShare = it
+                                Toast.makeText(context, if (it) "已开启：分享导入后自动抠图" else "已关闭：分享导入后需手动抠图", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                    Text(
+                        if (autoCutoutOnShare)
+                            "从系统分享图片进来后自动开始抠图"
+                        else "关闭后分享导入图片需手动点击抠图",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -3595,9 +4311,9 @@ Card(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("精细抠图（大图分块）", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text("精细抠图（大图分块）· 实验性", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                ">1024px 图片自动分块推理保留细节，内存低时建议关闭",
+                                "【实验性功能，默认关闭】>1024px 图片自动分块推理保留细节；分块拼接可能有接缝，内存低时建议关闭",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3970,6 +4686,38 @@ Card(
                 }
             }
 
+            // ===== 导出 / 导入（数据备份 + 模型导出）=====
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Archive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("导出 / 导入", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    }
+                    Text(
+                        "备份全部抠图历史 + 应用设置；模型可逐个单独导出（完整模型列表中选择）。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // ★ 进入导出页（完整模型列表 + 历史/配置备份）
+                    Button(
+                        onClick = { showExportPage = true },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("打开导出 / 导入页")
+                    }
+                }
+            }
+
             // ===== 关于 =====
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
@@ -4133,19 +4881,35 @@ Card(
                                         scope.launch {
                                             historyBatchSaving = true
                                             var okCount = 0
+                                            var skippedCount = 0
                                             val total = selected.size
                                             withContext(Dispatchers.IO) {
                                                 selected.forEachIndexed { idx, item ->
+                                                    // ★ 防重复：历史记录已标记"已保存相册" → 跳过
+                                                    if (item.savedToAlbum) {
+                                                        skippedCount++
+                                                        return@forEachIndexed
+                                                    }
                                                     val bmp = HistoryManager.loadResult(context, item)
-                                                    if (saveToRmbgFolder(context, bmp)) okCount++
+                                                    // ★ 用 saveToRmbgFolderNamed 拿相册文件名，供 markSavedToAlbum 记录到 meta，
+                                                    //   保证查看器"删除图片"能精确定位（此前用 Boolean 版丢文件名 → album_file 空）。
+                                                    val albumFn = if (bmp != null) saveToRmbgFolderNamed(context, bmp) else null
+                                                    if (!albumFn.isNullOrEmpty()) {
+                                                        okCount++
+                                                        // ★ 标记该记录已存相册（防重复 + UI 显示），并记录相册文件名供删除定位
+                                                        HistoryManager.markSavedToAlbum(context, item, albumFn)
+                                                    }
                                                     try { bmp?.recycle() } catch (_: Exception) {}
                                                 }
                                             }
                                             historyBatchSaving = false
                                             historySelectedIds = emptySet()
+                                            // ★ 保存成功 → 刷新历史列表（显示"已存相册"标记）
+                                            if (okCount > 0) historyVersion++
                                             Toast.makeText(
                                                 context,
-                                                "已保存 $okCount/$total 到相册 rmbg 文件夹",
+                                                if (skippedCount > 0) "已保存 $okCount/$total 到相册 rmbg 文件夹（$skippedCount 条已存在，已跳过）"
+                                                else "已保存 $okCount/$total 到相册 rmbg 文件夹",
                                                 Toast.LENGTH_LONG
                                             ).show()
                                         }
@@ -4287,7 +5051,18 @@ Card(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
                                                         .aspectRatio(1f)
-                                                        .clip(RoundedCornerShape(8.dp)),
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .combinedClickable(
+                                                            onClick = {
+                                                                // ★ 点击原图缩略图 = 全屏打开该组原图大图查看器（可缩放）
+                                                                //   与"展开/收起整个组"的动作区分：点图看原图，点卡片文字区折叠
+                                                                val look = latest
+                                                                viewerBitmap = HistoryManager.loadOriginal(context, look) ?: HistoryManager.loadResult(context, look)
+                                                                viewerOriginBitmap = viewerBitmap
+                                                                viewerItem = null
+                                                                showOriginalViewer = true
+                                                            }
+                                                        ),
                                                     contentScale = ContentScale.Crop
                                                 )
                                             } else {
@@ -4370,6 +5145,15 @@ Card(
                                                             maxLines = 1,
                                                             modifier = Modifier.weight(1f)
                                                         )
+                                                        // ★ 已存相册标记（防重复保存 + 用户可见）
+                                                        if (item.savedToAlbum) {
+                                                            Icon(
+                                                                Icons.Filled.CheckCircle,
+                                                                contentDescription = "已保存到相册",
+                                                                modifier = Modifier.size(12.dp),
+                                                                tint = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -4412,7 +5196,17 @@ Card(
                                             contentDescription = null,
                                             modifier = Modifier
                                                 .size(44.dp)
-                                                .clip(RoundedCornerShape(8.dp)),
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    // ★ 列表模式组头缩略图独立点击：全屏打开该组【原图】大图查看器（可缩放）。
+                                                    //   与"展开/收起整个组"的动作区分：点缩略图看原图大图，点其它区域折叠。
+                                                    //   修复：此前列表模式缩略图无独立 onClick，点击冒泡到父级 Row 只展开分组，看不了原图。
+                                                    val look = latest
+                                                    viewerBitmap = HistoryManager.loadOriginal(context, look) ?: HistoryManager.loadResult(context, look)
+                                                    viewerOriginBitmap = viewerBitmap
+                                                    viewerItem = null
+                                                    showOriginalViewer = true
+                                                },
                                             contentScale = ContentScale.Crop
                                         )
                                     } else {
@@ -4537,10 +5331,13 @@ Card(
                                                 if (item.durationMs > 0) infoParts += "${"%.1f".format(item.durationMs / 1000f)}s"
                                                 if (item.accel.isNotEmpty()) infoParts += item.accel
                                                 if (item.turbo) infoParts += "极速"
+                                                // ★ 已存相册标记（防重复保存 + 用户可见）
+                                                if (item.savedToAlbum) infoParts += "已存相册"
                                                 Text(
                                                     if (infoParts.isNotEmpty()) infoParts.joinToString(" · ") else "点击查看大图",
                                                     style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    color = if (item.savedToAlbum) MaterialTheme.colorScheme.primary
+                                                        else MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
                                             if (historySelectedIds.isEmpty()) {
@@ -5219,10 +6016,12 @@ Card(
     val viewer = viewerItem
     val showViewer = viewer != null || showOriginalViewer
     // ★★ 系统返回键兼容：按覆盖层优先级逐级返回（后进先出）
-    //   关于页 → 后处理编辑 → 查看器 → 快捷切模型弹窗 → 高级编辑/画笔 → 内置模型选择
+    //   关于页 → 导出页 → 后处理编辑 → 查看器 → 快捷切模型弹窗 → 高级编辑/画笔 → 内置模型选择
     BackHandler(enabled = true) {
         when {
             showAboutPage -> showAboutPage = false
+
+            showExportPage -> showExportPage = false
 
             showPostProcessScreen -> {
                 showPostProcessScreen = false
@@ -5510,6 +6309,11 @@ Card(
                                 Text("编辑", fontSize = 12.sp, maxLines = 1, softWrap = false)
                             }
                             // ★★ 4x 超分（独立按钮，不入历史；可保存/分享）
+                            // ★ 小图提示：当前图短边 < 256 时（超分引擎固定 输入≤512→输出≤2048，小图超分收益最大），
+                            //   在按钮前加橙色感叹号角标，提醒可先超分提升画质/分辨率。
+                            val isSmallForSuper = bmp != null && minOf(bmp.width, bmp.height) < 256 &&
+                                !superResBusy && !isProcessing &&
+                                !(superResLastW == bmp.width && superResLastH == bmp.height && superResLastW > 0)
                             OutlinedButton(
                                 onClick = { doSuperRes() },
                                 enabled = bmp != null && !superResBusy && !isProcessing &&
@@ -5532,6 +6336,11 @@ Card(
                                 } else {
                                     Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
                                     Spacer(Modifier.width(3.dp))
+                                    // ★ 小图感叹号：提示可超分（仅小图显示，普通图不打扰）
+                                    if (isSmallForSuper) {
+                                        Text("❗", fontSize = 12.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                        Spacer(Modifier.width(1.dp))
+                                    }
                                     Text("4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                                 }
                             }
@@ -5671,15 +6480,46 @@ Card(
                                 Spacer(Modifier.width(4.dp))
                                 Text("再次抠图", fontSize = 13.sp)
                             }
+                            // ★ 已存相册的历史记录 → 反转为「删除图片」（从相册删除该图 + 取消已存相册标记）；
+                            //   未存相册 → 仍是「保存相册」
+                            val isSavedToAlbum = isHistory && viewer?.savedToAlbum == true
                             OutlinedButton(
-                                onClick = { saveViewerToAlbum(context, bmp) },
+                                onClick = {
+                                    if (isSavedToAlbum) {
+                                        // ★ 删除 Pictures/rmbg 里这张图，并取消已存相册标记 → 刷新历史列表
+                                        if (viewer != null && deleteViewerFromAlbum(context, viewer!!)) {
+                                            // ★ 同步查看器当前记录状态，让按钮立即恢复为「保存相册」
+                                            viewerItem = viewer!!.copy(savedToAlbum = false, albumFileName = "")
+                                            historyVersion++
+                                        }
+                                    } else {
+                                        // ★ 历史记录保存成功 → 标记已存相册 + 刷新历史列表（显示"已存相册"）
+                                        if (viewer != null) {
+                                            val v = viewer!!
+                                            // saveViewerToAlbum 内部会 markSavedToAlbum（含相册文件名），这里同步按钮状态
+                                            if (saveViewerToAlbum(context, bmp, v)) {
+                                                val refreshed = HistoryManager.getHistory(context).find { it.id == v.id }
+                                                viewerItem = refreshed ?: v.copy(savedToAlbum = true)
+                                                historyVersion++
+                                            }
+                                        } else {
+                                            saveViewerToAlbum(context, bmp, null)
+                                        }
+                                    }
+                                },
                                 modifier = Modifier.weight(1f).height(40.dp),
                                 shape = RoundedCornerShape(10.dp),
                                 enabled = bmp != null
                             ) {
-                                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("保存相册", fontSize = 13.sp)
+                                if (isSavedToAlbum) {
+                                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.error)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("删除图片", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                                } else {
+                                    Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("保存相册", fontSize = 13.sp)
+                                }
                             }
                         }
                         // 第二行：另存为 + 分享（整行各半）
@@ -5812,7 +6652,10 @@ Card(
                                 Text("立即抠图", fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                             OutlinedButton(
-                                onClick = { saveViewerToAlbum(context, bmp) },
+                                onClick = {
+                                    // ★ 历史记录保存成功 → 标记已存相册 + 刷新历史列表（显示"已存相册"）
+                                    if (saveViewerToAlbum(context, bmp, viewer) && viewer != null) historyVersion++
+                                },
                                 modifier = Modifier.weight(1f).height(40.dp),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
@@ -5881,9 +6724,15 @@ Card(
                             scope.launch {
                                 withContext(Dispatchers.IO) {
                                     try {
-                                        HistoryManager.saveResult(context, edited, original = viewerOriginBitmap ?: originalBitmap, modelName = "后处理精修")?.let {
-                                            viewerItem = it
-                                            historyVersion++
+                                        // ★ 历史开关：关闭时后处理也不新建历史记录（只更新当前界面）
+                                        if (enableHistory) {
+                                            HistoryManager.saveResult(context, edited, original = viewerOriginBitmap ?: originalBitmap, modelName = "后处理精修")?.let {
+                                                viewerItem = it
+                                                historyVersion++
+                                            }
+                                        } else {
+                                            // 历史关闭：结果仅留在当前界面，更新查看器
+                                            viewerItem = null
                                         }
                                     } catch (_: Exception) {}
                                 }
@@ -6038,16 +6887,18 @@ Card(
                         statusText = "AI 重绘完成（${res.width}×${res.height} · ${"%.1f".format(res.generationTimeMs / 1000f)}s）"
                         aiRedrawStatus = "✅ 重绘完成 ${res.width}×${res.height}，用时 ${"%.1f".format(res.generationTimeMs / 1000f)} 秒"
                         aiEngineStatus = if (backend == "dream") "LocalDream App" else AiRedrawEngine.status
-                        // 写入历史（复用后处理精修通道，保留原图）
-                        HistoryManager.saveResult(
-                            context, res.bitmap,
-                            original = src,
-                            modelName = if (backend == "dream") "AI重绘(LocalDream)" else "AI重绘",
-                            durationMs = res.generationTimeMs,
-                            accel = if (backend == "dream") "LocalDream" else "LocalDream",
-                            // ★ 分支继承：重绘是结果链的延伸，归当前会话分支（A→B→C 同链）
-                            originalKey = currentHistoryKey.ifBlank { computeOriginalKey(src) }
-                        )?.let { historyVersion++ }
+                        // 写入历史（复用后处理精修通道，保留原图）；★ 受历史记录开关控制
+                        if (enableHistory) {
+                            HistoryManager.saveResult(
+                                context, res.bitmap,
+                                original = src,
+                                modelName = if (backend == "dream") "AI重绘(LocalDream)" else "AI重绘",
+                                durationMs = res.generationTimeMs,
+                                accel = if (backend == "dream") "LocalDream" else "LocalDream",
+                                // ★ 分支继承：重绘是结果链的延伸，归当前会话分支（A→B→C 同链）
+                                originalKey = currentHistoryKey.ifBlank { computeOriginalKey(src) }
+                            )?.let { historyVersion++ }
+                        }
                     } else {
                         aiRedrawStatus = "❌ 重绘结果已失效"
                     }
@@ -6344,12 +7195,19 @@ private fun downscaleForShare(bmp: Bitmap, maxSide: Int): Bitmap {
     return Bitmap.createScaledBitmap(bmp, nw, nh, true)
 }
 
-/** 保存到应用默认文件夹 Pictures/rmbg（Android 10+ 用 MediaStore 无权限写公共目录） */
-private fun saveToRmbgFolder(context: android.content.Context, bmp: Bitmap?): Boolean {
-    if (bmp == null) return false
+/** 保存到应用默认文件夹 Pictures/rmbg（Android 10+ 用 MediaStore 无权限写公共目录）。
+ *  @return 是否保存成功 */
+private fun saveToRmbgFolder(context: android.content.Context, bmp: Bitmap?): Boolean =
+    saveToRmbgFolderNamed(context, bmp) != null
+
+/** 保存到 Pictures/rmbg 并返回相册内文件名（供 markSavedToAlbum 记录，便于查看器"删除图片"精确定位）；
+ *  失败返回 null。 */
+private fun saveToRmbgFolderNamed(context: android.content.Context, bmp: Bitmap?): String? {
+    if (bmp == null) return null
     return try {
+        val displayName = "rmbg_${System.currentTimeMillis()}.png"
         val values = android.content.ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "rmbg_${System.currentTimeMillis()}.png")
+            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/rmbg")
             put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -6364,20 +7222,74 @@ private fun saveToRmbgFolder(context: android.content.Context, bmp: Bitmap?): Bo
                 android.content.ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
                 null, null
             )
-            true
-        } else false
-    } catch (_: Exception) { false }
+            displayName
+        } else null
+    } catch (_: Exception) { null }
 }
 
-/** 保存查看器中的图片到应用默认文件夹 Pictures/rmbg（无权限） */
-private fun saveViewerToAlbum(context: android.content.Context, bmp: Bitmap?) {
-    if (bmp == null) return
-    val ok = saveToRmbgFolder(context, bmp)
+/** 保存查看器中的图片到应用默认文件夹 Pictures/rmbg（无权限）。
+ *  @param histItem 可空：查看器若打开的是历史记录，传入该记录；保存成功后标记"已存相册"防止重复保存
+ *  @return 是否保存成功 */
+private fun saveViewerToAlbum(
+    context: android.content.Context,
+    bmp: Bitmap?,
+    histItem: HistoryManager.HistoryItem? = null
+): Boolean {
+    if (bmp == null) return false
+    // ★ 防重复：历史记录已标记"已存相册" → 直接提示不重复写入
+    if (histItem != null && histItem.savedToAlbum) {
+        Toast.makeText(context, "该记录已保存到相册 rmbg 文件夹", Toast.LENGTH_SHORT).show()
+        return false
+    }
+    val fileName = saveToRmbgFolderNamed(context, bmp)
+    // ★ 历史记录保存成功 → 标记已存相册（防重复 + UI 显示"已存相册"，并记录相册文件名供删除定位）
+    if (fileName != null && histItem != null) {
+        HistoryManager.markSavedToAlbum(context, histItem, fileName)
+    }
     Toast.makeText(
         context,
-        if (ok) "已保存到相册 rmbg 文件夹" else "保存失败",
+        if (fileName != null) "已保存到相册 rmbg 文件夹" else "保存失败",
         Toast.LENGTH_SHORT
     ).show()
+    return fileName != null
+}
+
+/** ★ 从系统相册 Pictures/rmbg 删除查看器当前显示的这张图（查看器"删除图片"按钮）。
+ *  按历史记录 meta 中记录的相册文件名（album_file）精确删除；删除成功 → 取消"已存相册"标记。
+ *  @return 是否删除成功 */
+private fun deleteViewerFromAlbum(
+    context: android.content.Context,
+    histItem: HistoryManager.HistoryItem
+): Boolean {
+    val fileName = histItem.albumFileName
+    if (fileName.isEmpty()) {
+        Toast.makeText(context, "未记录相册文件名，无法定位删除（可尝试重新保存后再删除）", Toast.LENGTH_SHORT).show()
+        return false
+    }
+    val resolver = context.contentResolver
+    // ★ 精确按 文件名 + 相对路径 定位，只删这一张
+    val selection = "${MediaStore.Images.Media.DISPLAY_NAME}=? AND ${MediaStore.Images.Media.RELATIVE_PATH}=?"
+    val selArgs = arrayOf(fileName, "Pictures/rmbg/")
+    val uri = resolver.query(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        arrayOf(MediaStore.Images.Media._ID),
+        selection, selArgs, null
+    )?.use { c -> if (c.moveToFirst()) c.getLong(0) else -1L } ?: -1L
+    val deleted = if (uri >= 0L) {
+        resolver.delete(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            "${MediaStore.Images.Media._ID}=?",
+            arrayOf(uri.toString())
+        ) > 0
+    } else false
+    if (deleted) {
+        // ★ 取消该记录的"已存相册"标记（meta + 内存缓存），UI 恢复"保存相册"按钮
+        HistoryManager.markUnSavedFromAlbum(context, histItem)
+        Toast.makeText(context, "已从相册 rmbg 文件夹删除该图片", Toast.LENGTH_SHORT).show()
+    } else {
+        Toast.makeText(context, "删除失败：相册中未找到该图片", Toast.LENGTH_SHORT).show()
+    }
+    return deleted
 }
 
 /** 解码图片（保留高分辨率，最大边 4096px；防 OOM 但仍保细节） */

@@ -31,8 +31,8 @@ android {
         applicationId = "com.rmbg.offline"
         minSdk = 27
         targetSdk = 35
-        versionCode = 43
-        versionName = "1.2.0"
+        versionCode = 44
+        versionName = "1.3.0"
 
         // ★ 是否为 Lite 精简版（包名 com.rmbg.offline.lite，模型不内置、走 HF 云下载）
         buildConfigField("boolean", "IS_LITE", "false")
@@ -49,15 +49,15 @@ android {
         create("normal") {
             dimension = "edition"
             applicationId = "com.rmbg.offline"
-            versionCode = 43
-            versionName = "1.2.0"
+            versionCode = 44
+            versionName = "1.3.0"
             buildConfigField("boolean", "IS_LITE", "false")
         }
         create("lite") {
             dimension = "edition"
             applicationId = "com.rmbg.offline.lite"
-            versionCode = 43
-            versionName = "1.2.0"
+            versionCode = 44
+            versionName = "1.3.0"
             buildConfigField("boolean", "IS_LITE", "true")
         }
     }
@@ -278,10 +278,13 @@ tasks.register("downloadQnnBins") {
     doLast { ensureQnnBins() }
 }
 
-// 构建 normal 版时，preBuild 阶段先确保 bin 就绪
+// 构建 normal 版时，preBuild 阶段先确保模型就绪
+// ★ QNN .bin（权重）不内置，走 App 运行时 HF 云下载（assets 仅保留 3 个 EPContext 的 .onnx 头），
+//   因此不再在构建期自动拉取 QNN bin——避免把 ~197MB bin 打回 APK。
+//   SAM CPU 分割模型仍按需在构建期下载内置。
 tasks.configureEach {
     if (name == "preBuild") {
-        dependsOn("downloadQnnBins")
+        dependsOn("downloadAnimeSeg")
         dependsOn("downloadSamModels")
     }
 }
@@ -362,4 +365,78 @@ tasks.register("downloadSamModels") {
         }
     }
     doLast { ensureSamModels() }
+}
+
+// =============================================================
+// ★ normal（完整版）构建时自动下载 Anime-Seg CPU 抠图模型（176MB）
+// -------------------------------------------------------------
+// Anime-Seg ONNX（176MB）不入 git 仓库（.gitignore 忽略）。
+// 云编译（GitHub Actions）与本地构建 normal 版时自动从 HF 拉到 assets/models/，
+// 复用 QNN 的镜像源与断点续传逻辑，经大小校验。Lite 版跳过。
+// 直链形如：https://hf-mirror.com/skytnt/anime-seg/resolve/main/isnetis.onnx
+// =============================================================
+val ANIME_SEG_MODEL = QnnBinSpec("anime_seg.onnx", 176_069_933L) // 176MB
+
+fun ensureAnimeSegModel() {
+    val dir = rootProject.file("app/src/normal/assets/models")
+    dir.mkdirs()
+    val target = File(dir, ANIME_SEG_MODEL.name)
+    if (target.exists() && target.length() == ANIME_SEG_MODEL.sizeBytes) {
+        println("✓ Anime-Seg 模型已就绪: ${target.name}")
+        return
+    }
+    val repo = "skytnt/anime-seg"
+    val srcPath = "isnetis.onnx"
+    var downloaded = if (target.exists()) target.length() else 0L
+    var ok = false
+    var lastErr: Exception? = null
+    for (base in QNN_BIN_MIRRORS) {  // 复用 hf-mirror.com / huggingface.co
+        val url = URL("$base/$repo/resolve/main/$srcPath")
+        var conn: HttpURLConnection? = null
+        try {
+            println("↓ 下载 Anime-Seg (${ANIME_SEG_MODEL.sizeBytes / 1048576}MB) <- $base ${if (downloaded > 0) "[续传 ${downloaded / 1048576}MB]" else ""}")
+            val c = url.openConnection() as HttpURLConnection
+            conn = c
+            c.connectTimeout = 30_000
+            c.readTimeout = 180_000
+            c.instanceFollowRedirects = true
+            if (downloaded > 0) c.setRequestProperty("Range", "bytes=$downloaded-")
+            c.connect()
+            val code = c.responseCode
+            if (code !in 200..299 && code != 206) { lastErr = RuntimeException("HTTP $code"); c.disconnect(); continue }
+            val input = c.inputStream
+            val out = FileOutputStream(target, downloaded > 0)
+            val buf = ByteArray(1 shl 16)
+            var total = downloaded
+            var n: Int
+            while (input.read(buf).also { n = it } != -1) { out.write(buf, 0, n); total += n }
+            out.close(); input.close(); c.disconnect()
+            if (target.length() != ANIME_SEG_MODEL.sizeBytes) { lastErr = RuntimeException("大小校验失败: 期望 ${ANIME_SEG_MODEL.sizeBytes} 实际 ${target.length()}"); downloaded = target.length(); continue }
+            ok = true
+            println("✓ Anime-Seg 模型下载完成 (${(target.length() / 1048576f).toInt()}MB)")
+            break
+        } catch (e: Exception) {
+            lastErr = e
+            println("  ✗ $base 失败: ${e.message}")
+            try { conn?.disconnect() } catch (_: Exception) {}
+        }
+    }
+    if (!ok) throw GradleException("Anime-Seg 模型下载失败: $srcPath -> ${lastErr?.message}")
+}
+
+tasks.register("downloadAnimeSeg") {
+    group = "build"
+    description = "下载 normal 版 Anime-Seg CPU 抠图模型（176MB，hf-mirror 优先）"
+    onlyIf {
+        if (project.hasProperty("skipBinDownload")) {
+            println("  (已通过 -PskipBinDownload 跳过 Anime-Seg 模型下载)")
+            false
+        } else {
+            val names = gradle.startParameter.taskNames.joinToString(" ")
+            val isNormal = names.contains("Normal")
+            if (!isNormal) println("  (lite/非 normal 构建，跳过 Anime-Seg 模型下载)")
+            isNormal
+        }
+    }
+    doLast { ensureAnimeSegModel() }
 }
