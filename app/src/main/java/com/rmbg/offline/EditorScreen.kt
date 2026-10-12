@@ -263,11 +263,19 @@ import kotlin.math.roundToInt
                                         (p1.previousPosition.x - p0.previousPosition.x).let { it * it } +
                                         (p1.previousPosition.y - p0.previousPosition.y).let { it * it }
                                     )
+                                    // ★ 中心位移（两指中心从上一帧到当前帧的移动）：缩放和平移共用，只计算一次
+                                    val prevCx = (p0.previousPosition.x + p1.previousPosition.x) / 2
+                                    val prevCy = (p0.previousPosition.y + p1.previousPosition.y) / 2
+                                    val cx = (p0.position.x + p1.position.x) / 2
+                                    val cy = (p0.position.y + p1.position.y) / 2
                                     if (prevDist > 0) {
                                         val newScale = (scale * (dist / prevDist)).coerceIn(0.5f, 8f)
-                                        val centerX = (p0.position.x + p1.position.x) / 2
-                                        val centerY = (p0.position.y + p1.position.y) / 2
-                                        // ★ 统一坐标模型：缩放围绕两指中心，保证中心点对应同一图像像素。
+                                        // ★ 缩放围绕【上一帧两指中心】(prevCx,prevCy) 锚定，保持该点对应同一图像像素，
+                                        //   之后只叠加一次中心位移 (cx-prevCx)——与 Compose detectTransformGestures 语义一致。
+                                        //   旧版：围绕当前帧中心缩放（已隐含中心位移）再叠加 cx-prevCx → 双重平移，
+                                        //   中心锚点漂移，观感不是"以两指中心为轴"。
+                                        //   推导：effL' = prevCx - (prevCx-effL)*(newScale/scale)，
+                                        //   offsetX' = effL' - cw/2 + imgW_new/2。
                                         val cw = size.width.toFloat()
                                         val ch = size.height.toFloat()
                                         val bw2 = displayBitmap.width.toFloat()
@@ -279,14 +287,11 @@ import kotlin.math.roundToInt
                                         val effT = ch / 2f - imgH_old / 2f + offsetY
                                         val imgW_new = bw2 * fitS * newScale
                                         val imgH_new = bh2 * fitS * newScale
-                                        offsetX = centerX - (centerX - effL) * (newScale / scale) - cw / 2f + imgW_new / 2f
-                                        offsetY = centerY - (centerY - effT) * (newScale / scale) - ch / 2f + imgH_new / 2f
+                                        offsetX = prevCx - (prevCx - effL) * (newScale / scale) - cw / 2f + imgW_new / 2f
+                                        offsetY = prevCy - (prevCy - effT) * (newScale / scale) - ch / 2f + imgH_new / 2f
                                         scale = newScale
                                     }
-                                    val prevCx = (p0.previousPosition.x + p1.previousPosition.x) / 2
-                                    val prevCy = (p0.previousPosition.y + p1.previousPosition.y) / 2
-                                    val cx = (p0.position.x + p1.position.x) / 2
-                                    val cy = (p0.position.y + p1.position.y) / 2
+                                    // ★ 只叠加一次中心位移（跟随两指中心移动而平移）
                                     offsetX += cx - prevCx
                                     offsetY += cy - prevCy
                                 }

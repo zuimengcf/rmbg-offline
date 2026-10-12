@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
@@ -25,6 +26,15 @@
         <service
             android:name=".KeepAliveService"
             android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <!-- ★ 常驻保活服务：用 specialUse 类型（非 dataSync），不受 Android 15 dataSync 6 小时超时限制 -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="keep_alive_to_prevent_background_kill_during_model_inference" />
+        </service>
+        <service
+            android:name=".DownloadService"
+            android:exported="false"
             android:foregroundServiceType="dataSync" />
 
         <receiver
@@ -34,6 +44,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

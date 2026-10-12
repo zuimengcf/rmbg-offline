@@ -67,14 +67,30 @@ jobs:
         #   （含 "Normal" 触发 downloadQnnBins 自动拉取 QNN bin；GitHub runner 可达官方源）
         run: ./gradlew assembleNormalRelease assembleLiteRelease --no-daemon --stacktrace
 
-      - name: Upload APK artifact
+      - name: Prepare APK filenames
+        # ★ 复制并重命名为规范文件名（rmbg-normal / rmbg-lite），Release 与 Artifact 均用此名
+        run: |
+          mkdir -p dist
+          NORMAL_APK="$(ls app/build/outputs/apk/normal/release/*.apk | grep -v unsigned | head -n 1)"
+          LITE_APK="$(ls app/build/outputs/apk/lite/release/*.apk | grep -v unsigned | head -n 1)"
+          cp "$NORMAL_APK" dist/rmbg-normal.apk
+          cp "$LITE_APK" dist/rmbg-lite.apk
+          ls -lh dist/
+
+      - name: Upload Normal APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rmbg-offline-apk
-          # ★ 双 flavor release 产物（签名后的 APK）
-          path: |
-            app/build/outputs/apk/normal/release/*.apk
-            app/build/outputs/apk/lite/release/*.apk
+          # ★ 完整版独立 artifact（单个 APK 文件，不再打包成 zip）
+          name: rmbg-normal
+          path: dist/rmbg-normal.apk
+          if-no-files-found: error
+
+      - name: Upload Lite APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # ★ 精简版独立 artifact（单个 APK 文件）
+          name: rmbg-lite
+          path: dist/rmbg-lite.apk
           if-no-files-found: error
 
       - name: Create Release
@@ -83,9 +99,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # ★ 正式版双 APK：完整版(normal) + 精简版(lite)，全部上传到 Release
-          NORMAL_APK="$(ls app/build/outputs/apk/normal/release/*.apk | grep -v unsigned | head -n 1)"
-          LITE_APK="$(ls app/build/outputs/apk/lite/release/*.apk | grep -v unsigned | head -n 1)"
-          echo "normal=$NORMAL_APK"
-          echo "lite=$LITE_APK"
-          gh release create "$TAG" "$NORMAL_APK" "$LITE_APK" --title "$TAG" --generate-notes --latest
+          # ★ 正式版双 APK：完整版(normal) + 精简版(lite)，以规范文件名（rmbg-normal / rmbg-lite）上传到 Release
+          echo "normal=dist/rmbg-normal.apk"
+          echo "lite=dist/rmbg-lite.apk"
+          gh release create "$TAG" dist/rmbg-normal.apk dist/rmbg-lite.apk --title "$TAG" --generate-notes --latest

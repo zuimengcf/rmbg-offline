@@ -185,23 +185,26 @@ fun AreaSelectScreen(
                                             val dw = display.width.toFloat(); val dh = display.height.toFloat()
                                             val fs = min(cw / dw, ch / dh)
                                             val fw = dw * fs; val fh = dh * fs
-                                            val imgCx = (cw - fw * scale) / 2f + offset.x + fw * scale / 2f
-                                            val imgCy = (ch - fh * scale) / 2f + offset.y + fh * scale / 2f
-                                            val pinchCx = (p0.position.x + p1.position.x) / 2f
-                                            val pinchCy = (p0.position.y + p1.position.y) / 2f
-                                            val ratio = newScale / scale
-                                            val dx = pinchCx - imgCx
-                                            val dy = pinchCy - imgCy
+                                            // ★ 与画笔模式 EditBrushLayer 完全一致的公式（用户验证正确）：
+                                            //   缩放围绕【上一帧两指中心】锚定 + 整体重算 offset，再叠加一次中心位移。
+                                            val imgW_old = fw * scale
+                                            val imgH_old = fh * scale
+                                            val effL = cw / 2f - imgW_old / 2f + offset.x
+                                            val effT = ch / 2f - imgH_old / 2f + offset.y
+                                            val imgW_new = fw * newScale
+                                            val imgH_new = fh * newScale
+                                            val prevCx = (p0.previousPosition.x + p1.previousPosition.x) / 2f
+                                            val prevCy = (p0.previousPosition.y + p1.previousPosition.y) / 2f
                                             offset = Offset(
-                                                offset.x + dx * (1f - ratio),
-                                                offset.y + dy * (1f - ratio)
+                                                prevCx - (prevCx - effL) * (newScale / scale) - cw / 2f + imgW_new / 2f,
+                                                prevCy - (prevCy - effT) * (newScale / scale) - ch / 2f + imgH_new / 2f
                                             )
                                             scale = newScale
+                                            // ★ 只叠加一次中心位移（跟随两指中心移动而平移）
+                                            val cx = (p0.position.x + p1.position.x) / 2f
+                                            val cy = (p0.position.y + p1.position.y) / 2f
+                                            offset = offset + Offset(cx - prevCx, cy - prevCy)
                                         }
-                                        // 双指平移：两指中点位移
-                                        offset += Offset(
-                                            ((p0.position.x - p0.previousPosition.x) + (p1.position.x - p1.previousPosition.x)) / 2,
-                                            ((p0.position.y - p0.previousPosition.y) + (p1.position.y - p1.previousPosition.y)) / 2)
                                     }
                                     evt.changes.forEach { it.consume() }
                                 } else if (active.size == 1) {

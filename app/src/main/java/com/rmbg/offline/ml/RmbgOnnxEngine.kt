@@ -287,14 +287,17 @@ class RmbgOnnxEngine(
                         "htp_graph_finalization_optimization_mode" to "3",
                         "offload_graph_io_quantization" to "0"
                     )
-                    // ★★ 只通过 device-level API 添加 QNN EP，且只传 1 个设备。
-                    //   此前同时用了反射 addExecutionProvider("QNN", options) + device-level addExecutionProvider(qnnDevices)
-                    //   + 手动 addConfigEntry("ep.qnn.*")，三路叠加导致 session 出现 2 个 QNNExecutionProvider，
-                    //   EPContext 节点匹配歧义报 "not compatible with any execution provider"。
-                    //   修复：去掉反射和手动 config entries，只走 device-level 单设备路径。
+                    // ★★ 只通过 device-level API 添加 QNN EP。
+                    //   ★★ 关键修正：必须传【全部】QNN 设备 qnnDevices，而不是 qnnDevices.first()！
+                    //   设备开启了 ORT_QNN_ENABLE_CPU_BACKEND=1，epDevices 会暴露 2 个 QNN 设备
+                    //   （一个 CPU-class READY 注册设备 + 实际 HTP 设备）。此前只取 first()
+                    //   很可能取到 CPU-class 设备，用它加载 HTP 编译的 EPContext →
+                    //   ORT_NOT_IMPLEMENTED "EPContext not compatible"。参考官方 demo 用法：
+                    //   addExecutionProvider(qnnDevices, providerOptions) 传全部设备，
+                    //   backend_type=htp 仍让插件选择实际 HTP backend。
                     try {
-                        addExecutionProvider(listOf(qnnDevices.first()), qnnOptions)
-                        dbg("device-level addExecutionProvider([single QNN device], options) - OK")
+                        addExecutionProvider(qnnDevices, qnnOptions)
+                        dbg("device-level addExecutionProvider(all QNN devices count=${qnnDevices.size}, options) - OK")
                     } catch (devErr: Exception) {
                         dbg("device-level addExecutionProvider failed: ${devErr.message}")
                         throw devErr
@@ -460,38 +463,54 @@ class RmbgOnnxEngine(
         // 若 close 已被请求（onStop 触发），等待的推理不应再跑
         if (closeRequested) throw java.util.concurrent.CancellationException("引擎已停止")
         try {
-        // ★★ 峰值内存保护：原图超限则降采样到工作上限内抠图，完成后放大回原尺寸
+        // ★★ 小图保护（QNN HTP 对极小输入会输出空白/全透明异常）：
+        //   分享/相册来的图片可能是缩略图（几十 px），QMND 图固定 shape（如 1024×1024），
+        //   极端内容缩放后模型识别失败 → 报 ORT_NOT_IMPLEMENTED 或输出全 0。
+        //   解法：输入短边 < MIN_INPUT_SIDE 时先等比放大到该阈值再抠图，完成后缩回原尺寸。
+        //   （放大用双线性，边缘保留；抠完缩回不影响最终输出尺寸）
         val w0 = input.width
         val h0 = input.height
         val px0 = w0.toLong() * h0.toLong()
         var work = input
-        var downscaled = false
+        var resized = false   // 是否发生过尺寸调整（缩小或放大），最后统一恢复原尺寸
+        val MIN_INPUT_SIDE = 256
+        val shortSide = minOf(w0, h0)
+        if (shortSide in 1 until MIN_INPUT_SIDE) {
+            val scale = MIN_INPUT_SIDE.toFloat() / shortSide
+            val nw = (w0 * scale).toInt().coerceAtLeast(MIN_INPUT_SIDE)
+            val nh = (h0 * scale).toInt().coerceAtLeast(MIN_INPUT_SIDE)
+            work = Bitmap.createScaledBitmap(input, nw, nh, true)
+            resized = true
+            android.util.Log.d("RMBGEngine", "小图保护：${w0}x${h0} 等比放大到 ${nw}x${nh} 抠图，完成后缩回原尺寸")
+        }
+        // ★★ 峰值内存保护：原图超限则降采样到工作上限内抠图，完成后放大回原尺寸
         if (px0 > maxWorkingPixels) {
             val scale = kotlin.math.sqrt(maxWorkingPixels.toDouble() / px0)
             val nw = (w0 * scale).toInt().coerceAtLeast(1)
             val nh = (h0 * scale).toInt().coerceAtLeast(1)
+            if (work !== input) { try { work.recycle() } catch (_: Exception) {} }
             work = Bitmap.createScaledBitmap(input, nw, nh, true)
-            downscaled = true
+            resized = true
             // 内存保护日志（未用 load 内的局部 dbg，避免跨作用域调用）
             android.util.Log.d("RMBGEngine", "内存保护：大图 ${w0}x${h0}(${px0}px) 降采样到 ${nw}x${nh} 抠图，完成后再放大回原尺寸")
         }
 
-        // 大图自动分块精细推理（>inputSize 触发，保留细节）；小图整体推理
-        val isLarge = work.width > inputSize || work.height > inputSize
-        val result = if (!isLarge) {
+        // ★ 分块严格受 tileMode 参数控制：只有显式开启「精细抠图（大图分块）」才走分块拼接；
+        //   否则即使图片任意一边 > inputSize，也整体缩放到 inputSize 推理（避免拼接痕迹）
+        val result = if (!tileMode) {
             removeBackgroundSingle(work, threshold)
         } else {
             removeBackgroundTiled(work, threshold, onProgress)
         }
 
-        // 若降采样过，把透明结果等比放大回原图尺寸
-        if (downscaled) {
+        // 若发生过尺寸调整（放大或缩小），把透明结果恢复回原图尺寸
+        if (resized) {
             val restored = Bitmap.createScaledBitmap(result, w0, h0, true)
-            // ★ 同步放大未硬化副本到原尺寸（供查看器后处理）
+            // ★ 同步缩放未硬化副本到原尺寸（供查看器后处理）
             val softRestored = lastSoftResult?.let { Bitmap.createScaledBitmap(it, w0, h0, true) }
-            if (result !== work) result.recycle()
+            if (result !== work) try { result.recycle() } catch (_: Exception) {}
             lastSoftResult?.recycle()
-            work.recycle()
+            if (work !== input) try { work.recycle() } catch (_: Exception) {}
             lastSoftResult = softRestored
             return restored
         }
@@ -689,6 +708,13 @@ class RmbgOnnxEngine(
         lastSoftResult = out // 未硬化结果，供查看器后处理
         return out
     }
+
+    /**
+     * 局部重新抠图（选区）：把整图交给模型推理（保留全局上下文，边缘更准），
+     * 但只把选区内的新 mask 覆盖到当前结果上，选区外保留现有结果。
+     * @param region 原图像素坐标区域 [left, top, right, bottom]
+     */
+
 
     /**
      * 局部重新抠图（选区）：把整图交给模型推理（保留全局上下文，边缘更准），

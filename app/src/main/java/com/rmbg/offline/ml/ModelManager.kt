@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.rmbg.offline.BuildConfig
+import com.rmbg.offline.Notifications
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -53,6 +54,9 @@ object ModelManager {
         // ---- 直链下载（非 HF 镜像源；GitHub Release / 任意 CDN 直链）----
         // ★ 非空时云下载直接走该直链（downloadModelFromUrlTo），不走 HF 镜像循环。
         val directUrl: String? = null,
+        // ---- CPU 模型内置资产路径（普通 ONNX，打包在 APK assets 内，免下载）----
+        // ★ 非空时该 CPU 模型「内置」：App 首启/选中时从 assets 拷贝到模型目录，离线可用。
+        val assetPath: String? = null,      // assets 内 onnx 路径（如 models/anime_seg.onnx）
         // ---- QNN EPContext 专用（kind=QNN 时有效）----
         val assetOnnx: String? = null,      // assets 内 onnx 路径（ep_cache_context 引用 bin 名）
         val assetBin: String? = null,       // assets 内 bin 路径
@@ -97,7 +101,10 @@ object ModelManager {
             hfRepo = "skytnt/anime-seg",
             hfFile = "isnetis.onnx",
             sizeBytes = 176_069_933L,
-            description = "动漫人物抠图 · ISNet · 176MB"
+            description = "动漫人物抠图 · ISNet · 176MB",
+            // ★ 内置默认模型：CPU 版 animeseg 打包在 APK assets（models/anime_seg.onnx，176MB），
+            //   离线可用、免下载，作为完整版默认抠图模型。
+            assetPath = "models/anime_seg.onnx"
         ),
         // ★ 量化直链模型（GitHub/HF 直链，不走镜像循环）
         BuiltinModel(
@@ -182,8 +189,11 @@ object ModelManager {
      *    其余 CPU 模型（rmbg14_fp32/rmbg20/modnet）本来就是 HF 云下载，不内置也能用，
      *    但为贴合「只内置 anime」策略，Lite 下直接隐藏这些 CPU 模型列表项 */
     val builtinModels: List<BuiltinModel> = if (BuildConfig.IS_LITE) {
+        // ★ Lite 精简版：anime_seg【不内置】（无 assetPath → 走 HF 云下载），
+        //   精简 APK 体积（省 176MB）；其余三个 QNN（onnx 头内置、bin 云下载）。
+        val animeSegLite = cpuModels.find { it.id == "anime_seg" }!!.copy(assetPath = null)
         listOf(
-            cpuModels.find { it.id == "anime_seg" }!!,
+            animeSegLite,
             qnnModels.find { it.id == "qnn_rmbg14_v2" }!!,
             qnnModels.find { it.id == "qnn_animeseg" }!!,
             qnnModels.find { it.id == "qnn_modnet" }!!
@@ -618,6 +628,50 @@ object ModelManager {
             Triple("sam_vit_b_01ec64.encoder.onnx", encDst, 300_000_000L),
             Triple("sam_vit_b_01ec64.decoder.onnx", decDst, 10_000_000L)
         )
+        // 两个文件需下载的总量（encoder ≈ 359MB + decoder ≈ 16MB），用于合并进度条与完成判定。
+        // 只需统计「尚未完整」的文件（循环里 < minValid 才真正下载）。
+        val needBytes = files.sumOf { (_, dst, minValid) ->
+            if (dst.exists() && dst.length() >= minValid) 0L else when (dst.name) {
+                SAM_ENCODER_NAME -> 359_217_309L
+                else -> 16_500_212L
+            }
+        }
+        // 包装 listener：转发给调用方的同时，把合并进度/完成/失败推到系统通知
+        val wrap = object : ProgressListener {
+            private var doneBytes = 0L
+            private var completed = 0
+            private var doneNotified = false
+            override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                listener?.onProgress(bytesDownloaded, totalBytes, speedBps)
+                if (needBytes > 0) {
+                    val acc = doneBytes + bytesDownloaded
+                    Notifications.notifyDownloadProgress(
+                        context, "正在下载 SAM 模型…", acc, needBytes, speedBps
+                    )
+                }
+            }
+            override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
+                listener?.onMirrorSwitch(mirrorIndex, mirrorName)
+            }
+            override fun onMirrorError(mirrorName: String, error: String) {
+                listener?.onMirrorError(mirrorName, error)
+            }
+            override fun onDone(file: File) {
+                doneBytes += file.length()
+                completed++
+                listener?.onDone(file)
+                if (completed >= files.size) notifyDoneOnce()
+            }
+            override fun onError(e: Exception) {
+                listener?.onError(e)
+                Notifications.cancelDownloadNotification(context)
+            }
+            fun notifyDoneOnce() {
+                if (doneNotified) return
+                doneNotified = true
+                Notifications.notifyDownloadDone(context, "SAM 模型已下载", "点击开始智能选区")
+            }
+        }
         for ((hfFile, dst, minValid) in files) {
             if (dst.exists() && dst.length() >= minValid) continue
             try {
@@ -626,17 +680,19 @@ object ModelManager {
                     hfRepo = repo,
                     hfFile = hfFile,
                     destFile = dst,
-                    listener = listener
+                    listener = wrap
                 )
                 if (!ok || !dst.exists() || dst.length() < minValid) {
-                    mainHandler.post { listener?.onError(RuntimeException("SAM 下载不完整: $hfFile")) }
+                    mainHandler.post { wrap.onError(RuntimeException("SAM 下载不完整: $hfFile")) }
                     return false
                 }
             } catch (e: Exception) {
-                mainHandler.post { listener?.onError(e) }
+                mainHandler.post { wrap.onError(e) }
                 return false
             }
         }
+        // 全部成功：确保完成通知弹出（若之前 onDone 已计数到全部文件则不会再触发，这里兜底）
+        wrap.notifyDoneOnce()
         return isSamReady()
     }
 
@@ -1234,6 +1290,11 @@ object ModelManager {
     /** 分块下载并发数（★ 8 并发：更快利用带宽；QNN bin 大文件收益明显） */
     private const val DOWNLOAD_THREADS = 8
 
+    /** ★ 单流顺序下载阈值：≤此大小（字节）的目标走单块 Range 顺序下载，不再 8 并发分块。
+     *   对超分 zip（30MB）、SAM、小型模型，并发 Range 分块会被 CDN 限速且中断后需整体重来，
+     *   单线程流式下载反而更快更稳。这里取 50MB */
+    private const val SINGLE_STREAM_MAX_BYTES = 50L * 1024 * 1024
+
     // ---- 下载取消支持 ----
     /** 请求取消当前下载：置位后下载循环在每个分块的读循环里检测并中断 */
     @Volatile
@@ -1387,30 +1448,15 @@ object ModelManager {
     }
 
     /**
-     * 自动选择默认模型（QNN/CPU 识别 + 锁定型号）：
-     * 设备支持 QNN（骁龙 + libcdsprpc）时：
-     *   ★ 优先选「明确声明了当前设备型号」的 QNN 模型（如 SM8550 → qnn_animeseg）；
-     *     再退到未声明型号的通用 QNN 模型（如 qnn_rmbg14_v2）；
-     *   否则回退 CPU 默认模型（anime_seg）。
+     * 自动选择默认模型：
+     * ★ 默认体系 = animeseg：设备支持 QNN → 默认选中 QNN 版 animeseg（bin 走 HF 云下载）；
+     *   否则默认选中内置 CPU 版 animeseg（离线可用，免下载）。
      */
     fun autoPickDefaultModel(context: Context): String {
-        if (!isQnnSupported(context)) {
-            return builtinModels.firstOrNull { !it.isQnn }?.id ?: "anime_seg"
-        }
-        val soc = deviceSocModel().uppercase()
-        // ① 明确声明匹配当前型号的 QNN 模型（按内置列表顺序，qnn_animeseg 在 qnn_modnet 前）
-        val declaredMatch = builtinModels.firstOrNull {
-            it.isQnn && qnnTargetSoc(it) == soc && qnnModelMatchesDevice(it)
-        }
-        // ② 未声明型号的通用 QNN 模型
-        val genericQnn = builtinModels.firstOrNull {
-            it.isQnn && qnnTargetSoc(it) == null && qnnModelMatchesDevice(it)
-        }
-        // ③ CPU 兜底
-        return declaredMatch?.id
-            ?: genericQnn?.id
-            ?: builtinModels.firstOrNull { !it.isQnn }?.id
-            ?: "anime_seg"
+        // ★ 默认始终选内置 CPU 版 animeseg（assets 离线部署，免下载）——
+        //   不自动选 QNN 模型，避免启动即触发 QNN bin 的 HF 联网下载（用户明确要求 QNN 不要自动下载）。
+        //   用户若想用 QNN，在模型页手动选择对应 QNN 模型即可（届时才会走部署/下载链路）。
+        return builtinModels.find { it.id == "anime_seg" }?.id ?: "anime_seg"
     }
 
     /** QNN 可用且当前设备匹配该模型 → 应默认开 QNN 加速 */
@@ -1545,6 +1591,47 @@ object ModelManager {
     }
 
     /**
+     * ★ 确保内置 CPU 模型已就位（从 assets 拷贝到模型目录，离线可用、免下载）。
+     * 仅对声明了 assetPath 的内置 CPU 模型生效；QNN/无内置资产模型返回原状态不变。
+     * @param modelId 目标模型 id（默认当前选中模型）
+     * @return 该模型当前是否已就位（已存在/拷贝成功 → true；内置资产缺失或拷贝失败 → false）
+     */
+    fun ensureCpuModelFromAssets(context: Context, modelId: String = selectedModelId): Boolean {
+        val bm = builtinModels.find { it.id == modelId } ?: return isModelDownloaded()
+        val asset = bm.assetPath ?: return isModelDownloaded()   // 非内置资产 → 交给下载逻辑
+        // ★★ Bug 修复：必须用基于 modelId 的确定性部署名 model_<id>.onnx，
+        //   不能直接用 modelFileName()——它基于【全局 selectedModelId】，
+        //   当用户当前选中别的高优先级模型（如 QNN）时，modelFileName() 会返回那个模型的部署名，
+        //   导致 anime_seg 资产被拷到错误文件名，而 isBuiltinModelDownloaded 却一直查 model_anime_seg.onnx
+        //   → 实际已部署但模型页永远显示"未下载"。
+        val dst = File(modelDir(), cpuModelDeployFile(modelId))
+        return try {
+            modelDir().mkdirs()
+            // assets 内置且目标缺失/损坏 → 拷贝
+            if (!dst.exists() || dst.length() < cpuModelMinValid(bm)) {
+                android.util.Log.i("RMBG-MODEL", "内置 CPU 模型首次部署: $asset -> ${dst.name}")
+                context.assets.open(asset).use { src ->
+                    dst.outputStream().use { out -> src.copyTo(out) }
+                }
+            }
+            dst.exists() && dst.length() >= cpuModelMinValid(bm)
+        } catch (e: Exception) {
+            android.util.Log.e(
+                "RMBG-MODEL",
+                "内置 CPU 模型拷贝失败 id=$modelId asset=$asset", e
+            )
+            false
+        }
+    }
+
+    /** 内置 CPU 模型的确定性部署文件名（model_<id>.onnx），与 isBuiltinModelDownloaded 判定一致 */
+    private fun cpuModelDeployFile(modelId: String): String = "model_$modelId.onnx"
+
+    /** 内置 CPU 模型的有效大小下限（≥1MB，且 ≥ 元数据 5%） */
+    private fun cpuModelMinValid(bm: BuiltinModel): Long =
+        maxOf(1_000_000L, bm.sizeBytes / 20)
+
+    /**
      * ★ 双轨：确保 QNN EPContext 产物就位（assets 兜底优先，缺失时才走 HF 下载）
      * assets 内置 onnx+bin 打包在 APK 内，无网/离线优先用内置；内置缺失或损坏时，
      * 从 HF 仓库下载 onnx+bin（hfRepo/hfBinFile）到部署名，实现「下载型」模型。
@@ -1656,12 +1743,16 @@ object ModelManager {
                         existing.renameTo(target)
                         return@downloadOne true
                     }
-                    // 分块下载（直接对签名 CDN URL 发 Range）
-                    val downloaded = downloadChunks(
+                    // 分块下载（直接对签名 CDN URL 发 Range；小文件自动单流，大文件并发分块）
+                    val downloaded = downloadAdaptive(
                         client = client, baseUrl = realUrl, totalBytes = totalBytes,
                         dir = dir, partPrefix = partBase, token = hfToken,
-                        threads = DOWNLOAD_THREADS,
-                        onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
+                        onProgress = { d, t, sp ->
+                            mainHandler.post {
+                                listener?.onProgress(d, t, sp)
+                                Notifications.notifyDownloadProgress(context, "正在下载 ${bm.name}…", d, t, sp)
+                            }
+                        }
                     )
                     if (downloaded != totalBytes) {
                         android.util.Log.e("RMBG-MODEL", "分块下载不完整 ${downloaded}/${totalBytes} <- $mirror.name")
@@ -1683,10 +1774,16 @@ object ModelManager {
             else downloadOne(hfRepo, hfOnnx, onnxDst)
         val binOk = if (binDst.exists() && binDst.length() > 1_000_000) true
             else downloadOne(hfRepo, hfBin, binDst)
-
-        onnxOk && binOk &&
+        val result = onnxOk && binOk &&
             onnxDst.exists() && onnxDst.length() > 100 &&
             binDst.exists() && binDst.length() > 1_000_000
+        // ★ 双文件模式下载结束：成功弹完成通知，失败取消进度通知
+        if (result) {
+            Notifications.notifyDownloadDone(context, "${bm.name} 模型已下载", "点击开始抠图")
+        } else {
+            Notifications.cancelDownloadNotification(context)
+        }
+        result
     }
 
     /**
@@ -1709,7 +1806,6 @@ object ModelManager {
         val dir = modelDir().also { it.mkdirs() }
         val zipDst = File(dir, "${bm.id}.zip")
         val mainHandler = Handler(Looper.getMainLooper())
-
         // ① 已有解压产物 → 直接完成
         val onnxDst = qnnContextFileFor(bm.id)
         val binDst = qnnContextBinFileFor(bm.id)
@@ -1719,26 +1815,55 @@ object ModelManager {
         ) {
             return@withContext true
         }
-
+        // ★ 包装 listener：转发给调用方的同时，把下载进度/完成/失败推到系统通知栏
+        val wrap = object : ProgressListener {
+            private var doneNotified = false
+            override fun onProgress(bytesDownloaded: Long, totalBytes: Long, speedBps: Long) {
+                listener?.onProgress(bytesDownloaded, totalBytes, speedBps)
+                Notifications.notifyDownloadProgress(
+                    context, "正在下载 ${bm.name}…", bytesDownloaded, totalBytes, speedBps
+                )
+            }
+            override fun onMirrorSwitch(mirrorIndex: Int, mirrorName: String) {
+                listener?.onMirrorSwitch(mirrorIndex, mirrorName)
+            }
+            override fun onMirrorError(mirrorName: String, error: String) {
+                listener?.onMirrorError(mirrorName, error)
+            }
+            override fun onDone(file: File) {
+                listener?.onDone(file)
+                if (!doneNotified) {
+                    doneNotified = true
+                    Notifications.notifyDownloadDone(context, "${bm.name} 模型已下载", "点击开始抠图")
+                }
+            }
+            override fun onError(e: Exception) {
+                listener?.onError(e)
+                Notifications.cancelDownloadNotification(context)
+            }
+        }
         // ② 下载 zip（复用 downloadModel 的 destFile 通道：镜像循环 + 302 + 分块 + 断点续传）
         val zipOk = downloadModel(
             context = context,
             hfRepo = hfRepo,
             hfFile = bm.hfZip!!,
             destFile = zipDst,
-            listener = listener
+            listener = wrap
         )
 
         // ③ 解压部署（zip → bin+onnx → 模型目录，与本地导入同构）
         if (!zipOk || !zipDst.exists()) {
-            mainHandler.post { listener?.onMirrorError("zip", "zip 下载失败或文件不存在") }
+            mainHandler.post { wrap.onError(RuntimeException("zip 下载失败或文件不存在")) }
             return@withContext false
         }
         val deployed = deployQnnZip(zipDst, bm, mainHandler)
         if (!deployed) {
-            mainHandler.post { listener?.onMirrorError("zip", "zip 解压部署失败（检查包内 onnx/bin 结构）") }
+            mainHandler.post { wrap.onError(RuntimeException("zip 解压部署失败（检查包内 onnx/bin 结构）")) }
             return@withContext false
         }
+        // ★ 部署成功后删除下载的 zip 源包（避免残留在模型目录占用空间，与本地导入/SAM 导入一致）
+        try { zipDst.delete() } catch (_: Exception) {}
+        wrap.onDone(zipDst)
         true
     }
 
@@ -2146,10 +2271,17 @@ object ModelManager {
                     mirrorFailed("探测失败: ${e.message}")
                     continue
                 }
-                // 镜像可能返回异常小值（如 LFS 指针/错误重定向），以内置模型元数据兜底
-                val builtinMeta = builtinModels.find { it.id == selectedModelId }
+                // 镜像可能返回异常小值（如 LFS 指针/错误重定向），以内置模型元数据兜底。
+                // ★★ 重要修复：destFile 指向的目标可能是【非当前选中模型】（如超分 zip、SAM、AI 重绘包），
+                //   selectedModelId 的 sizeBytes 与之无关。若此时仍用 selectedModelId 的 metaBytes 强行覆盖
+                //   探测值（probedBytes < metaBytes/2 会成立，如 30MB 超分 zip vs 90MB 选中模型），
+                //   会导致 totalBytes 被错误放大 → downloadChunks 按错误大小分块 → 下载永远"不完整"
+                //   （part 文件残留 + 通知说成功却报下载失败）。
+                //   ★ 因此：destFile 非空（目标非当前模型）时，绝不套用 selectedModelId 元数据，
+                //     直接用探测值（异常小则走下方 minValid 校验拦截）。
+                val builtinMeta = if (destFile == null) builtinModels.find { it.id == selectedModelId } else null
                 val metaBytes = builtinMeta?.sizeBytes ?: 0L
-                val totalBytes = if (probedBytes in 1 until metaBytes / 2) metaBytes else probedBytes
+                val totalBytes = if (destFile == null && probedBytes in 1 until metaBytes / 2) metaBytes else probedBytes
                 // 当前模型最小有效大小：内置元数据的 5%，至少 1MB（MODNet 25MB 也能通过校验）
                 // ★ 去掉 destFile 强制 100MB 门槛：QNN zip（90MB）与 SD 大包一视同仁，按各自模型阈值校验
                 val minValid = minValidSize()
@@ -2171,14 +2303,15 @@ object ModelManager {
                 // 分块下载前先解析真实下载 URL（跟随 302 拿到 CDN 签名 URL，Range 才生效）
                 // ★ 已在上面"第一步"手动解析过（client 关闭了自动跟随），realUrl 已是签名 CDN URL，
                 //   直接用于分块；若解析失败则回退 resolve 直链（OkHttp 会跟随但 Range 可能失效）。
-                val downloadedAll = downloadChunks(
+                // ★ 统一走 downloadAdaptive：≤50MB 小文件（超分 zip、SAM）单流顺序下载，避免 CDN 并发限速
+                //   与中断后 part 大小不一的整体重来；大文件（QNN bin、SD 模型）8 并发分块充分利用带宽。
+                val downloadedAll = downloadAdaptive(
                     client = client,
                     baseUrl = realUrl,
                     totalBytes = totalBytes,
                     dir = dir,
                     partPrefix = partBase,
                     token = token,
-                    threads = DOWNLOAD_THREADS,
                     onProgress = { done, total, speed ->
                         mainHandler.post { listener?.onProgress(done, total, speed) }
                     }
@@ -2285,12 +2418,11 @@ object ModelManager {
                 return@withContext okZip
             }
 
-            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range）
+            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range；小文件自动单流，大文件并发分块）
             val partBase = "model_custom"
-            val downloadedAll = downloadChunks(
+            val downloadedAll = downloadAdaptive(
                 client = client, baseUrl = realUrl, totalBytes = totalBytes,
                 dir = dir, partPrefix = partBase, token = hfToken,
-                threads = DOWNLOAD_THREADS,
                 onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
             )
             if (downloadedAll < totalBytes) {
@@ -2398,12 +2530,11 @@ object ModelManager {
                 return@withContext true
             }
 
-            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range）
+            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range；小文件自动单流，大文件并发分块）
             val partBase = "dl_tmp_${System.currentTimeMillis()}"
-            val downloadedAll = downloadChunks(
+            val downloadedAll = downloadAdaptive(
                 client = client, baseUrl = realUrl, totalBytes = totalBytes,
                 dir = dir, partPrefix = partBase, token = hfToken,
-                threads = DOWNLOAD_THREADS,
                 onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
             )
             if (downloadedAll < totalBytes) {
@@ -2523,6 +2654,101 @@ object ModelManager {
             }
         }
         results.awaitAll().sum()
+    }
+
+    /** ★ 单流顺序下载（小文件）：单个 Range: bytes=0- 请求整段顺序写盘。
+     *   与并发分块相比更适合 ≤50MB 文件（超分 zip / SAM 等）——CDN 对并发 Range 可能限速，
+     *   且单流在中断时只需重试单个 part，part 大小一致，更稳更快 */
+    private suspend fun downloadSingleStream(
+        client: OkHttpClient,
+        baseUrl: String,
+        totalBytes: Long,
+        dir: File,
+        partPrefix: String,
+        token: String,
+        onProgress: (Long, Long, Long) -> Unit
+    ): Long = withContext(Dispatchers.IO) {
+        val partFile = File(dir, "$partPrefix.part.0")
+        val reqBuilder = Request.Builder()
+            .url(baseUrl)
+            .header("Range", "bytes=0-${totalBytes - 1}")
+        if (token.isNotBlank()) {
+            reqBuilder.header("Authorization", "Bearer $token")
+        }
+        val startTime = System.currentTimeMillis()
+        try {
+            client.newCall(reqBuilder.build()).execute().use { resp ->
+                if (resp.code != 206 && resp.code != 200) {
+                    return@withContext 0L
+                }
+                val body = resp.body ?: return@withContext 0L
+                body.byteStream().use { input ->
+                    val out = FileOutputStream(partFile)
+                    val buf = ByteArray(512 * 1024)
+                    var done = 0L
+                    var read: Int
+                    while (input.read(buf).also { read = it } != -1) {
+                        if (cancelRequested) {
+                            out.close()
+                            return@withContext done
+                        }
+                        out.write(buf, 0, read)
+                        done += read
+                        val now = System.currentTimeMillis()
+                        val elapsed = (now - startTime).coerceAtLeast(1)
+                        onProgress(done, totalBytes, (done * 1000L / elapsed).coerceAtLeast(0))
+                    }
+                    out.flush()
+                    out.close()
+                }
+                partFile.length()
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    /** ★ 智能分块下载分发：≤50MB 走单流顺序下载（避免 CDN 并发 Range 限速），否则走 8 并发分块。
+     *   所有下载链路统一走这里，保证小文件（超分 zip、自定义直链 onnx、QNN 小 onnx 等）稳定快速，
+     *   大文件（QNN bin、SAM encoder、SD 模型）用并发充分利用带宽。
+     *
+     *   ★★ 进度回调节流（防模型页卡死）：分块下载每读 512KB 回调一次，359MB SAM ≈ 5600+ 次，
+     *   且每次回调都经 mainHandler.post 更新 5 个 Compose state + 通知栏 → 主线程被高频重组淹没，
+     *   模型页（实时扫盘判定）直接卡死。这里统一节流：至少 120ms 才放行一次进度回调，
+     *   平滑后约 8~15 次/秒，UI 完全无感且进度依然平滑。 */
+    private suspend fun downloadAdaptive(
+        client: OkHttpClient,
+        baseUrl: String,
+        totalBytes: Long,
+        dir: File,
+        partPrefix: String,
+        token: String,
+        onProgress: (Long, Long, Long) -> Unit
+    ): Long {
+        // ★ 节流包装：首次立即回调，之后至少 120ms 才回调一次（保持 8~15Hz，UI 不卡）
+        var lastPostMs = 0L
+        var lastD = 0L
+        var lastT = 0L
+        var lastSp = 0L
+        val throttled: (Long, Long, Long) -> Unit = { d, t, sp ->
+            val now = System.currentTimeMillis()
+            if (now - lastPostMs >= 120 || d >= t) {
+                lastPostMs = now
+                lastD = d; lastT = t; lastSp = sp
+                onProgress(d, t, sp)
+            }
+        }
+        if (totalBytes in 1..SINGLE_STREAM_MAX_BYTES) {
+            return downloadSingleStream(
+                client = client, baseUrl = baseUrl, totalBytes = totalBytes,
+                dir = dir, partPrefix = partPrefix, token = token, onProgress = throttled
+            )
+        }
+        return downloadChunks(
+            client = client, baseUrl = baseUrl, totalBytes = totalBytes,
+            dir = dir, partPrefix = partPrefix, token = token,
+            threads = DOWNLOAD_THREADS, onProgress = throttled
+        )
     }
 
     /** 合并分块到最终文件 */
@@ -2693,12 +2919,11 @@ object ModelManager {
                 return@withContext true
             }
 
-            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range）
+            // ④ 分块下载到 .part（直接对签名 CDN URL 发 Range；AI 模型通常>100MB → 并发分块）
             val partBase = destFile.name
-            val downloadedAll = downloadChunks(
+            val downloadedAll = downloadAdaptive(
                 client = client, baseUrl = realUrl, totalBytes = totalBytes,
                 dir = dir, partPrefix = partBase, token = token,
-                threads = DOWNLOAD_THREADS,
                 onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
             )
             if (downloadedAll < totalBytes) {

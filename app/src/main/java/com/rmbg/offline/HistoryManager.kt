@@ -43,7 +43,11 @@ object HistoryManager {
         /** 原图分组键（同一原图的多次抠图共享同一 key，用于归纳折叠分组） */
         val originalKey: String = "",
         /** 结果图文件大小（字节），用于大小排序 */
-        val fileSize: Long = 0L
+        val fileSize: Long = 0L,
+        /** ★ 是否已保存到本地相册（Pictures/rmbg），用于防重复保存 + UI 标记 */
+        val savedToAlbum: Boolean = false,
+        /** ★ 已保存到相册时的文件名（Pictures/rmbg 下），用于查看器"删除图片"精确定位删除；空=未记录 */
+        val albumFileName: String = ""
     )
 
     private fun historyDir(context: Context): File =
@@ -101,7 +105,7 @@ object HistoryManager {
         }
         thumb.recycle()
 
-        // 元数据（模型 / 耗时 / 加速 / 极速 / 原图分组键）
+        // 元数据（模型 / 耗时 / 加速 / 极速 / 原图分组键 / 是否已保存相册）
         try {
             File(dir, "meta_$id.txt").writeText(
                 listOf(
@@ -110,7 +114,9 @@ object HistoryManager {
                     "accel=$accel",
                     "turbo=$turbo",
                     "time=$ts",
-                    "original_key=$originalKey"
+                    "original_key=$originalKey",
+                    "saved_to_album=false",   // ★ 初始未存相册；保存到 Pictures/rmbg 后由 markSavedToAlbum 置 true
+                    "album_file="            // ★ 已存相册时的文件名（Pictures/rmbg 下），供查看器"删除图片"精确定位
                 ).joinToString("\n")
             )
         } catch (_: Exception) {}
@@ -156,6 +162,54 @@ object HistoryManager {
         )
     }
 
+    /** ★ 标记该历史记录已保存到本地相册（Pictures/rmbg），防重复保存。
+     *  在 saveToRmbgFolder 成功后调用；meta 文件写入 saved_to_album=true 持久化。
+     *  @param albumFileName 相册内文件名（Pictures/rmbg 下），供查看器"删除图片"精确定位；null/空则不记录 */
+    fun markSavedToAlbum(context: Context, item: HistoryItem, albumFileName: String? = null) {
+        val fn = albumFileName.orEmpty()
+        try {
+            val dir = historyDir(context)
+            val meta = File(dir, "meta_${item.id}.txt")
+            val lines = if (meta.exists()) meta.readLines().toMutableList() else mutableListOf()
+            val i1 = lines.indexOfFirst { it.startsWith("saved_to_album=") }
+            if (i1 >= 0) lines[i1] = "saved_to_album=true" else lines += "saved_to_album=true"
+            if (fn.isNotEmpty()) {
+                val i2 = lines.indexOfFirst { it.startsWith("album_file=") }
+                if (i2 >= 0) lines[i2] = "album_file=$fn" else lines += "album_file=$fn"
+            }
+            meta.writeText(lines.joinToString("\n"))
+        } catch (_: Exception) {}
+        // ★ 同步更新内存缓存，让历史列表立即反映"已存相册"标记
+        histCache?.let { cache ->
+            val ni = cache.map {
+                if (it.id == item.id) it.copy(savedToAlbum = true, albumFileName = if (fn.isNotEmpty()) fn else it.albumFileName) else it
+            }
+            histCache = ni
+        }
+    }
+
+    /** ★ 标记该历史记录已【不再】保存到本地相册（查看器"删除图片"成功后调用）。
+     *  meta 写入 saved_to_album=false + 清空 album_file，UI 取消"已存相册"标记。 */
+    fun markUnSavedFromAlbum(context: Context, item: HistoryItem) {
+        try {
+            val dir = historyDir(context)
+            val meta = File(dir, "meta_${item.id}.txt")
+            val lines = if (meta.exists()) meta.readLines().toMutableList() else mutableListOf()
+            val i1 = lines.indexOfFirst { it.startsWith("saved_to_album=") }
+            if (i1 >= 0) lines[i1] = "saved_to_album=false" else lines += "saved_to_album=false"
+            val i2 = lines.indexOfFirst { it.startsWith("album_file=") }
+            if (i2 >= 0) lines[i2] = "album_file=" else lines += "album_file="
+            meta.writeText(lines.joinToString("\n"))
+        } catch (_: Exception) {}
+        // ★ 同步更新内存缓存，让历史列表立即取消"已存相册"标记
+        histCache?.let { cache ->
+            val ni = cache.map {
+                if (it.id == item.id) it.copy(savedToAlbum = false, albumFileName = "") else it
+            }
+            histCache = ni
+        }
+    }
+
     /** 读取单条元数据（旧记录无文件则返回默认值） */
     private fun readMeta(context: Context, id: String): HistoryItem {
         val dir = historyDir(context)
@@ -165,6 +219,8 @@ object HistoryManager {
         var accel = ""
         var turbo = false
         var originalKey = ""
+        var savedToAlbum = false
+        var albumFileName = ""
         try {
             if (meta.exists()) {
                 meta.readLines().forEach { line ->
@@ -176,6 +232,8 @@ object HistoryManager {
                             "accel" -> accel = kv[1]
                             "turbo" -> turbo = kv[1] == "true"
                             "original_key" -> originalKey = kv[1]
+                            "saved_to_album" -> savedToAlbum = kv[1] == "true"
+                            "album_file" -> albumFileName = kv[1]
                         }
                     }
                 }
@@ -190,7 +248,9 @@ object HistoryManager {
             durationMs = durationMs,
             accel = accel,
             turbo = turbo,
-            originalKey = originalKey
+            originalKey = originalKey,
+            savedToAlbum = savedToAlbum,
+            albumFileName = albumFileName
         )
     }
 
@@ -228,6 +288,8 @@ object HistoryManager {
                     accel = meta.accel,
                     turbo = meta.turbo,
                     originalKey = meta.originalKey,
+                    savedToAlbum = meta.savedToAlbum,
+                    albumFileName = meta.albumFileName,
                     fileSize = f.length()
                 )
             }
