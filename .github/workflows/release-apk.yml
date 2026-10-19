@@ -82,6 +82,7 @@ jobs:
           NEW_KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
           NEW_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
+          mkdir -p dist
           export PATH="$PATH:$ANDROID_HOME/build-tools"
           BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           APKSIGNER="$BUILD_TOOLS/apksigner"
