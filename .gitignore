@@ -33,6 +33,7 @@ app/src/normal/assets/models/*.onnx
 # ★ 签名私钥（务必保密，绝不入库）
 keystore/
 keystore.properties
+lineage.bin
 
 
 # 上传辅助脚本（含 token，勿提交）
