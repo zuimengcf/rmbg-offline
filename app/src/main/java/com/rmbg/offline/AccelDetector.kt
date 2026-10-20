@@ -33,7 +33,7 @@ object AccelDetector {
                 opts.addNnapi()
                 // 能创建 NNAPI 选项说明系统支持
                 nnapiSupported = true
-                deviceNames.add("NNAPI (系统默认)")
+                deviceNames.add(OperitApp.appContext.getString(R.string.nnapi))
             } catch (_: Exception) {
                 nnapiSupported = false
             }
@@ -63,7 +63,7 @@ object AccelDetector {
             sb.append("检测到加速器 (${r.deviceCount}):\n")
             r.deviceNames.forEach { sb.append("  • $it\n") }
         } else {
-            sb.append("未检测到专用加速器\n")
+            sb.append(OperitApp.appContext.getString(R.string.str_308))
         }
         sb.append("CPU 核心: ${r.cpuCores}\n")
         sb.append("存储空间: ${r.ramMB} MB\n")

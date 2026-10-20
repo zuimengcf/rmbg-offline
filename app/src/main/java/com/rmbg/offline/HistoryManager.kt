@@ -46,7 +46,7 @@ object HistoryManager {
         val fileSize: Long = 0L,
         /** ★ 是否已保存到本地相册（Pictures/rmbg），用于防重复保存 + UI 标记 */
         val savedToAlbum: Boolean = false,
-        /** ★ 已保存到相册时的文件名（Pictures/rmbg 下），用于查看器"删除图片"精确定位删除；空=未记录 */
+        /** ★ 已保存到相册时的文件名（Pictures/rmbg 下），用于查看器删除图片精确定位删除；空=未记录 */
         val albumFileName: String = ""
     )
 
@@ -116,7 +116,7 @@ object HistoryManager {
                     "time=$ts",
                     "original_key=$originalKey",
                     "saved_to_album=false",   // ★ 初始未存相册；保存到 Pictures/rmbg 后由 markSavedToAlbum 置 true
-                    "album_file="            // ★ 已存相册时的文件名（Pictures/rmbg 下），供查看器"删除图片"精确定位
+                    "album_file="            // ★ 已存相册时的文件名（Pictures/rmbg 下），供查看器删除图片精确定位
                 ).joinToString("\n")
             )
         } catch (_: Exception) {}
@@ -164,7 +164,7 @@ object HistoryManager {
 
     /** ★ 标记该历史记录已保存到本地相册（Pictures/rmbg），防重复保存。
      *  在 saveToRmbgFolder 成功后调用；meta 文件写入 saved_to_album=true 持久化。
-     *  @param albumFileName 相册内文件名（Pictures/rmbg 下），供查看器"删除图片"精确定位；null/空则不记录 */
+     *  @param albumFileName 相册内文件名（Pictures/rmbg 下），供查看器删除图片精确定位；null/空则不记录 */
     fun markSavedToAlbum(context: Context, item: HistoryItem, albumFileName: String? = null) {
         val fn = albumFileName.orEmpty()
         try {
@@ -179,7 +179,7 @@ object HistoryManager {
             }
             meta.writeText(lines.joinToString("\n"))
         } catch (_: Exception) {}
-        // ★ 同步更新内存缓存，让历史列表立即反映"已存相册"标记
+        // ★ 同步更新内存缓存，让历史列表立即反映已存相册标记
         histCache?.let { cache ->
             val ni = cache.map {
                 if (it.id == item.id) it.copy(savedToAlbum = true, albumFileName = if (fn.isNotEmpty()) fn else it.albumFileName) else it
@@ -188,8 +188,8 @@ object HistoryManager {
         }
     }
 
-    /** ★ 标记该历史记录已【不再】保存到本地相册（查看器"删除图片"成功后调用）。
-     *  meta 写入 saved_to_album=false + 清空 album_file，UI 取消"已存相册"标记。 */
+    /** ★ 标记该历史记录已【不再】保存到本地相册（查看器删除图片成功后调用）。
+     *  meta 写入 saved_to_album=false + 清空 album_file，UI 取消已存相册标记。 */
     fun markUnSavedFromAlbum(context: Context, item: HistoryItem) {
         try {
             val dir = historyDir(context)
@@ -201,7 +201,7 @@ object HistoryManager {
             if (i2 >= 0) lines[i2] = "album_file=" else lines += "album_file="
             meta.writeText(lines.joinToString("\n"))
         } catch (_: Exception) {}
-        // ★ 同步更新内存缓存，让历史列表立即取消"已存相册"标记
+        // ★ 同步更新内存缓存，让历史列表立即取消已存相册标记
         histCache?.let { cache ->
             val ni = cache.map {
                 if (it.id == item.id) it.copy(savedToAlbum = false, albumFileName = "") else it

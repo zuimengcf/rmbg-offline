@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -43,7 +45,7 @@ class RmbgOnnxEngine(
 
     /** NNAPI 启用/回退的说明（供 UI 反馈） */
     @Volatile
-    var nnapiStatus: String = "未启用"
+    var nnapiStatus: String = OperitApp.appContext.getString(R.string.str_300)
         private set
 
     /** 背景硬化阈值（alpha 下限，0~255）：
@@ -59,7 +61,7 @@ class RmbgOnnxEngine(
 
     /** QNN 启用/回退的说明（供 UI 反馈） */
     @Volatile
-    var qnnStatus: String = "未启用"
+    var qnnStatus: String = OperitApp.appContext.getString(R.string.str_300)
         private set
 
     private var env: OrtEnvironment? = null
@@ -142,10 +144,10 @@ class RmbgOnnxEngine(
         val qnnWorthTry = enableQnn && (isQnnEpContextModel || isQdqModel)
         val nnapiWorthTry = enableNnapi && !isQdqModel
         val qnnSkipReason = when {
-            !enableQnn -> "未开启 QNN"
+            !enableQnn -> OperitApp.appContext.getString(R.string.qnn_34)
             isQnnEpContextModel -> ""
             isQdqModel -> ""
-            else -> "HTP 需 QDQ 量化模型，当前模型不适用"
+            else -> OperitApp.appContext.getString(R.string.htp)
         }
         if (enableQnn && qnnSkipReason.isNotEmpty()) {
             android.util.Log.w("RMBG-ENGINE", "QNN 预检不适用: $qnnSkipReason (${modelFile.name})")
@@ -184,7 +186,7 @@ class RmbgOnnxEngine(
                 try {
                     addNnapi()
                     nnapiActive = true
-                    nnapiStatus = "NNAPI 已启用"
+                    nnapiStatus = OperitApp.appContext.getString(R.string.nnapi_3)
                 } catch (e: Exception) {
                     nnapiActive = false
                     nnapiStatus = "NNAPI 不可用，已回退 CPU（${e.message ?: "未知错误"}）"
@@ -192,7 +194,7 @@ class RmbgOnnxEngine(
                 }
             } else {
                 nnapiActive = false
-                nnapiStatus = if (isQdqModel) "QDQ 量化模型不适用 NNAPI" else "未启用（设置中可打开）"
+                nnapiStatus = if (isQdqModel) OperitApp.appContext.getString(R.string.nnapi_5) else OperitApp.appContext.getString(R.string.str_301)
             }
             // QNN 加速：Qualcomm Hexagon HTP DSP（ORT 1.30.0 插件机制：registerExecutionProviderLibrary + getEpDevices）
             if (useQnn) {
@@ -258,13 +260,13 @@ class RmbgOnnxEngine(
                         e.registerExecutionProviderLibrary("QNNExecutionProvider", pluginPath.absolutePath)
                         dbg("QNN EP 插件注册成功: ${pluginPath.absolutePath}")
                     } else {
-                        dbg("QNN EP 插件已注册，复用现有设备")
+                        dbg(OperitApp.appContext.getString(R.string.qnn_4))
                     }
                     // 2. 找到 QNN EP 设备
                     val qnnDevices = e.epDevices.filter { it.epName == "QNNExecutionProvider" }
                     dbg("qnnDevices count=${qnnDevices.size}")
                     if (qnnDevices.isEmpty()) {
-                        throw RuntimeException("QNN EP 设备未找到（插件已注册但无设备）")
+                        throw RuntimeException(OperitApp.appContext.getString(R.string.qnn_7))
                     }
                     // 诊断：打印 QNN 设备的元数据 / 选项（看插件暴露了哪些默认 option）
                     try {
@@ -308,7 +310,7 @@ class RmbgOnnxEngine(
                         dbg("all EP devices: $allEps")
                     } catch (_: Exception) {}
                     qnnActive = true
-                    qnnStatus = "QNN (HTP DSP) 已启用"
+                    qnnStatus = OperitApp.appContext.getString(R.string.qnn_3)
                 } catch (e2: Exception) {
                     qnnActive = false
                     qnnStatus = "QNN 不可用，已回退 CPU（${e2.message ?: "未知错误"}）"
@@ -317,7 +319,7 @@ class RmbgOnnxEngine(
                 }
             } else {
                 qnnActive = false
-                qnnStatus = if (qnnSkipReason.isNotEmpty()) "QNN 未启用: $qnnSkipReason" else "未启用（设置中可打开）"
+                qnnStatus = if (qnnSkipReason.isNotEmpty()) "QNN 未启用: $qnnSkipReason" else OperitApp.appContext.getString(R.string.str_301)
             }
             }
         }
@@ -359,23 +361,23 @@ class RmbgOnnxEngine(
                 }
                 if (useQnn || useNnapi) {
                     // 加速器失败 → 降级：关闭全部加速器，纯 CPU 重试（托底）
-                    dbg("加速器创建失败，降级纯 CPU 重试...")
+                    dbg(OperitApp.appContext.getString(R.string.cpu_3))
                     useQnn = false
                     useNnapi = false
                     qnnActive = false
                     qnnStatus = "QNN 创建失败，已降级 CPU（${csErr.message ?: "未知错误"}）"
                     nnapiActive = false
-                    nnapiStatus = "NNAPI 创建失败，已降级 CPU"
+                    nnapiStatus = OperitApp.appContext.getString(R.string.nnapi_2)
                     try { options.close() } catch (_: Exception) {}
                     options = buildOptions(false, false)
-                    if (attempt >= 2) { dbg("降级已达上限，放弃重试"); throw csErr }
+                    if (attempt >= 2) { dbg(OperitApp.appContext.getString(R.string.str_450)); throw csErr }
                     continue
                 }
                 dbg("纯 CPU createSession 也失败，抛出: ${csErr.message}")
                 throw csErr
             }
         }
-        val finalSession = s ?: throw IllegalStateException("createSession 返回空 session")
+        val finalSession = s ?: throw IllegalStateException(OperitApp.appContext.getString(R.string.str_069))
         dbg("createSession OK, session=${finalSession != null}")
         env = e
         session = finalSession
@@ -461,7 +463,7 @@ class RmbgOnnxEngine(
         // ★ 运行锁：标记本次推理进行中（供 onStop 判断延迟 close，避免 native session 被释放后仍被调用闪退）
         isRunning = true
         // 若 close 已被请求（onStop 触发），等待的推理不应再跑
-        if (closeRequested) throw java.util.concurrent.CancellationException("引擎已停止")
+        if (closeRequested) throw java.util.concurrent.CancellationException(OperitApp.appContext.getString(R.string.str_250))
         try {
         // ★★ 小图保护（QNN HTP 对极小输入会输出空白/全透明异常）：
         //   分享/相册来的图片可能是缩略图（几十 px），QMND 图固定 shape（如 1024×1024），
@@ -528,7 +530,7 @@ class RmbgOnnxEngine(
         val e = env ?: throw IllegalStateException("Env not loaded")
 
         // ★ 停止检查：整体推理无法中断 native run，但至少在预处理前快速响应取消
-        if (cancelFlag) throw java.util.concurrent.CancellationException("抠图已停止")
+        if (cancelFlag) throw java.util.concurrent.CancellationException(OperitApp.appContext.getString(R.string.str_273))
 
         // ---- 预处理：等比 letterbox 到 inputSize×inputSize（居中、白底填充），内容不变形 ----
         val size = inputSize

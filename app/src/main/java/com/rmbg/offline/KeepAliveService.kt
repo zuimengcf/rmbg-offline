@@ -78,10 +78,10 @@ class KeepAliveService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "抠图服务",
+                OperitApp.appContext.getString(R.string.str_274),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "保持后台抠图任务不被系统回收"
+                description = OperitApp.appContext.getString(R.string.str_119)
                 setShowBadge(false)
             }
             val nm = getSystemService(NotificationManager::class.java)
@@ -107,12 +107,12 @@ class KeepAliveService : Service() {
             Notification.Builder(this)
         }
         return builder
-            .setContentTitle("RMBG 离线抠图")
+            .setContentTitle(OperitApp.appContext.getString(R.string.rmbg))
             .setSmallIcon(android.R.drawable.ic_popup_sync)
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setPriority(Notification.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "退出", exitIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, OperitApp.appContext.getString(R.string.str_429), exitIntent)
             .build()
     }
 }

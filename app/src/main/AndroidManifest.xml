@@ -11,7 +11,7 @@
 
     <application
         android:name=".OperitApp"
-        android:label="RMBG 离线抠图"
+        android:label="@string/app_name"
         android:icon="@android:drawable/ic_menu_gallery"
         android:theme="@style/Theme.RMBG"
         android:supportsRtl="true"

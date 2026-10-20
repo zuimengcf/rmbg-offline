@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -48,7 +50,7 @@ fun AiRedrawDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "AI 重绘 (img2img)",
+                        OperitApp.appContext.getString(R.string.ai_5),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f)
@@ -57,7 +59,7 @@ fun AiRedrawDialog(
                 }
 
                 Text(
-                    "通过 LocalDream 本地 NPU 重绘当前图片。需先在 LocalDream App 下载模型并保持后台运行。",
+                    OperitApp.appContext.getString(R.string.npu_5),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -65,8 +67,8 @@ fun AiRedrawDialog(
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { prompt = it },
-                    label = { Text("正向提示词") },
-                    placeholder = { Text("例如: masterpiece, best quality, 1girl, detailed") },
+                    label = { Text(OperitApp.appContext.getString(R.string.str_347)) },
+                    placeholder = { Text(OperitApp.appContext.getString(R.string.str_117)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 4
@@ -75,7 +77,7 @@ fun AiRedrawDialog(
                 OutlinedTextField(
                     value = negativePrompt,
                     onValueChange = { negativePrompt = it },
-                    label = { Text("负面提示词") },
+                    label = { Text(OperitApp.appContext.getString(R.string.str_407)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 3
@@ -114,7 +116,7 @@ fun AiRedrawDialog(
                 // ---- 分辨率 ----
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(Modifier.weight(1f)) {
-                        Text("宽度", style = MaterialTheme.typography.labelMedium)
+                        Text(OperitApp.appContext.getString(R.string.str_181), style = MaterialTheme.typography.labelMedium)
                         OutlinedTextField(
                             value = width.toString(),
                             onValueChange = { width = it.toIntOrNull() ?: 512 },
@@ -122,7 +124,7 @@ fun AiRedrawDialog(
                         )
                     }
                     Column(Modifier.weight(1f)) {
-                        Text("高度", style = MaterialTheme.typography.labelMedium)
+                        Text(OperitApp.appContext.getString(R.string.str_454), style = MaterialTheme.typography.labelMedium)
                         OutlinedTextField(
                             value = height.toString(),
                             onValueChange = { height = it.toIntOrNull() ?: 512 },
@@ -133,7 +135,7 @@ fun AiRedrawDialog(
 
                 // ---- 调度器 ----
                 Column {
-                    Text("调度器", style = MaterialTheme.typography.labelMedium)
+                    Text(OperitApp.appContext.getString(R.string.str_403), style = MaterialTheme.typography.labelMedium)
                     val schedulers = listOf("dpm_sde", "euler", "euler_ancestral", "ddim", "lcm")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         schedulers.forEach { s ->
@@ -154,7 +156,7 @@ fun AiRedrawDialog(
                     OutlinedButton(
                         onClick = onDismiss,
                         modifier = Modifier.weight(1f)
-                    ) { Text("取消") }
+                    ) { Text(OperitApp.appContext.getString(R.string.str_162)) }
                     Button(
                         onClick = {
                             onStart(
@@ -173,7 +175,7 @@ fun AiRedrawDialog(
                         },
                         enabled = prompt.isNotBlank(),
                         modifier = Modifier.weight(1f)
-                    ) { Text("开始重绘") }
+                    ) { Text(OperitApp.appContext.getString(R.string.str_246)) }
                 }
             }
         }

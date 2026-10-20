@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import android.content.Context
 import android.util.Log
@@ -62,7 +64,7 @@ object AiRedrawEngine {
 
     /** 最近状态信息（供 UI 展示） */
     @Volatile
-    var status: String = "未启动"
+    var status: String = OperitApp.appContext.getString(R.string.str_299)
         private set
 
     /** 引擎日志尾部（供 UI 诊断 QNN 是否生效） */
@@ -450,7 +452,7 @@ object AiRedrawEngine {
             val srcSo = nativeDir.listFiles { f -> f.isFile && f.name.endsWith(".so") && f.name.startsWith("libQnn") }
                 ?: emptyArray()
             if (srcSo.isEmpty()) {
-                status = "nativeLibraryDir 无 QNN 运行时库（未打包 qnn-runtime AAR）"
+                status = OperitApp.appContext.getString(R.string.qnn_16)
                 return@withContext false
             }
             var ok = 0
@@ -486,9 +488,9 @@ object AiRedrawEngine {
                 val sameModel = activeModelDir == targetModelDir
                 val sameRes = activeRes == (width to height)
                 if (sameModel && sameRes) {
-                    status = "引擎已在运行（模型/分辨率匹配）"
+                    status = OperitApp.appContext.getString(R.string.str_251)
                     running = true
-                    appendLog(context, "引擎已在运行，跳过启动")
+                    appendLog(context, OperitApp.appContext.getString(R.string.str_252))
                     return@withContext true
                 }
                 appendLog(context, "引擎运行中但模型/分辨率变化（${activeModelDir ?: "?"} @ ${activeRes ?: "?"} → $targetModelDir @ ${width}x$height），重启引擎")
@@ -516,8 +518,8 @@ object AiRedrawEngine {
             // 3. QNN 运行时目录
             val libDir = runtimeDir(context)
             if (!libDir.exists()) {
-                status = "QNN 运行时目录不存在，请先部署运行时"
-                appendLog(context, "❌ QNN 运行时目录不存在")
+                status = OperitApp.appContext.getString(R.string.qnn_14)
+                appendLog(context, OperitApp.appContext.getString(R.string.qnn_25))
                 return@withContext false
             }
 
@@ -612,7 +614,7 @@ object AiRedrawEngine {
             var lastHealthFail = ""
             while (System.currentTimeMillis() < deadline) {
                 if (!p.isAlive) {
-                    status = "引擎进程提前退出"
+                    status = OperitApp.appContext.getString(R.string.str_254)
                     appendLog(context, "❌ 引擎进程提前退出（exit code ${p.exitValue()}）")
                     running = false
                     return@withContext false
@@ -626,8 +628,8 @@ object AiRedrawEngine {
                 Thread.sleep(500)
             }
             if (!ready) {
-                status = "引擎启动超时（8081 未就绪）"
-                appendLog(context, "❌ 引擎启动超时（180s 内 8081 未就绪）")
+                status = OperitApp.appContext.getString(R.string.str_249)
+                appendLog(context, OperitApp.appContext.getString(R.string.str_103))
                 running = false
                 return@withContext false
             }
@@ -662,14 +664,14 @@ object AiRedrawEngine {
         val p = process
         if (p == null) {
             running = false
-            status = "引擎未运行"
+            status = OperitApp.appContext.getString(R.string.str_253)
             return@withContext true
         }
         try {
             p.destroy()
             if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
             running = false
-            status = "引擎已停止"
+            status = OperitApp.appContext.getString(R.string.str_250)
             process = null
             activeModelDir = null
             activeRes = null

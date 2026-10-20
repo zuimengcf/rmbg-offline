@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -132,7 +134,7 @@ class SamEngine(
      */
     fun segmentAt(src: Bitmap, point: IntArray, extraPos: List<IntArray>? = null): Bitmap? {
         ensureLoaded()
-        if (closeRequested) throw java.util.concurrent.CancellationException("引擎已停止")
+        if (closeRequested) throw java.util.concurrent.CancellationException(OperitApp.appContext.getString(R.string.str_250))
         isRunning = true
         try {
             val e = env ?: throw IllegalStateException("env not loaded")
@@ -169,9 +171,9 @@ class SamEngine(
                 val embResult = try { enc.run(mapOf(encInputName to inputTensor)) } finally { inputTensor.close() }
                 try {
                     val it = embResult.iterator()
-                    if (!it.hasNext()) throw IllegalStateException("encoder 输出为空")
+                    if (!it.hasNext()) throw IllegalStateException(OperitApp.appContext.getString(R.string.str_071))
                     embData = flattenToFloatArray(it.next().value.value)
-                        ?: throw IllegalStateException("encoder 输出解析失败")
+                        ?: throw IllegalStateException(OperitApp.appContext.getString(R.string.str_072))
                 } finally {
                     try { embResult.close() } catch (_: Exception) {}
                 }
@@ -243,14 +245,14 @@ class SamEngine(
                     val it2 = decResult.iterator()
                     if (it2.hasNext()) masksAny = it2.next().value.value
                 }
-                masksAny ?: throw IllegalStateException("decoder 输出为空")
+                masksAny ?: throw IllegalStateException(OperitApp.appContext.getString(R.string.str_070))
             } catch (t: Throwable) {
                 try { decResult.close() } catch (_: Exception) {}
                 throw t
             } finally {
                 try { decResult.close() } catch (_: Exception) {}
             }
-            val allLogits = flattenToFloatArray(masksAny) ?: throw IllegalStateException("masks 输出解析失败")
+            val allLogits = flattenToFloatArray(masksAny) ?: throw IllegalStateException(OperitApp.appContext.getString(R.string.str_073))
             val scores = flattenToFloatArray(scoresAny)
             // 解析候选数：masks 是 [1,N,H,W]，展平后总量 / (682*1024)
             val mh = MODEL_H; val mw = MODEL_W

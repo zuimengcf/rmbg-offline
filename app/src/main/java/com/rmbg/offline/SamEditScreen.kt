@@ -53,7 +53,7 @@ fun SamEditScreen(
     var workV by remember { mutableStateOf(0) }
 
     var samBusy by remember { mutableStateOf(false) }
-    var samStatus by remember { mutableStateOf("点击图片上的物体进行分割") }
+    var samStatus by remember { mutableStateOf(OperitApp.appContext.getString(R.string.str_366)) }
     var mask by remember { mutableStateOf<Bitmap?>(null) }
     var tapPoint by remember { mutableStateOf<IntArray?>(null) }
 
@@ -68,8 +68,8 @@ fun SamEditScreen(
     var objectTile by remember { mutableStateOf<Bitmap?>(null) }
 
     val colorPresets = listOf(
-        "金黄" to 49f, "淡蓝" to 205f, "珊瑚橘" to 12f,
-        "桃粉" to 340f, "薄荷绿" to 160f, "薰衣草紫" to 275f
+        OperitApp.appContext.getString(R.string.str_449) to 49f, OperitApp.appContext.getString(R.string.str_363) to 205f, OperitApp.appContext.getString(R.string.str_372) to 12f,
+        OperitApp.appContext.getString(R.string.str_324) to 340f, OperitApp.appContext.getString(R.string.str_396) to 160f, OperitApp.appContext.getString(R.string.str_397) to 275f
     )
 
     fun obtainEngine(): com.rmbg.offline.ml.SamEngine? {
@@ -78,21 +78,21 @@ fun SamEditScreen(
 
     // ===== 扣除 =====
     fun doErase() {
-        val m = mask ?: run { Toast.makeText(context, "请先点击物体", Toast.LENGTH_SHORT).show(); return }
+        val m = mask ?: run { Toast.makeText(context, OperitApp.appContext.getString(R.string.str_401), Toast.LENGTH_SHORT).show(); return }
         scope.launch {
             samBusy = true
             val out = withContext(Dispatchers.IO) { eraseByMask(work, m) }
             if (out != null) { work = out; workV++ }
             samBusy = false
             mask?.let { it.recycle() }; mask = null   // 扣除完成，撤掉选择遮罩显示真实透明结果
-            samStatus = "已扣除（点击处物体透明）"
-            Toast.makeText(context, "已扣除选区", Toast.LENGTH_SHORT).show()
+            samStatus = OperitApp.appContext.getString(R.string.str_225)
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_224), Toast.LENGTH_SHORT).show()
         }
     }
 
     // ===== 换色 =====
     fun doRecolor() {
-        val m = mask ?: run { Toast.makeText(context, "请先点击物体", Toast.LENGTH_SHORT).show(); return }
+        val m = mask ?: run { Toast.makeText(context, OperitApp.appContext.getString(R.string.str_401), Toast.LENGTH_SHORT).show(); return }
         scope.launch {
             samBusy = true
             val out = withContext(Dispatchers.IO) { recolorByMask(work, m, hueDeg, satScale) }
@@ -100,13 +100,13 @@ fun SamEditScreen(
             samBusy = false
             mask?.let { it.recycle() }; mask = null   // 换色完成，撤掉选择遮罩显示真实换色结果
             samStatus = "已换色（色相 ${hueDeg.toInt()}°）"
-            Toast.makeText(context, "已换色", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_226), Toast.LENGTH_SHORT).show()
         }
     }
 
     // ===== 移动 =====
     fun doStartMove() {
-        val m = mask ?: run { Toast.makeText(context, "请先点击物体", Toast.LENGTH_SHORT).show(); return }
+        val m = mask ?: run { Toast.makeText(context, OperitApp.appContext.getString(R.string.str_401), Toast.LENGTH_SHORT).show(); return }
         moving = true
         moveOffset = Offset.Zero
         moveOffsetImg = Offset.Zero
@@ -125,8 +125,8 @@ fun SamEditScreen(
         }
         cleanBase = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)?.apply { setPixels(basePx, 0, w, 0, 0, w, h) }
         objectTile = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)?.apply { setPixels(tilePx, 0, w, 0, 0, w, h) }
-        samStatus = "拖动移动物体，点「放下」完成"
-        Toast.makeText(context, "拖动移动，松手后点「放下」", Toast.LENGTH_SHORT).show()
+        samStatus = OperitApp.appContext.getString(R.string.str_277)
+        Toast.makeText(context, OperitApp.appContext.getString(R.string.str_278), Toast.LENGTH_SHORT).show()
     }
 
     fun doDropMove() {
@@ -143,8 +143,8 @@ fun SamEditScreen(
                 cleanBase?.recycle(); cleanBase = null
                 objectTile?.recycle(); objectTile = null
                 mask?.let { it.recycle() }; mask = null   // 移动完成，撤掉选择遮罩显示真实结果
-                samStatus = "物体已移动"
-                Toast.makeText(context, "物体已移动", Toast.LENGTH_SHORT).show()
+                samStatus = OperitApp.appContext.getString(R.string.str_371)
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_371), Toast.LENGTH_SHORT).show()
             }
         } else {
             moving = false
@@ -161,17 +161,17 @@ fun SamEditScreen(
         moveOffsetImg = Offset.Zero
         cleanBase?.recycle(); cleanBase = null
         objectTile?.recycle(); objectTile = null
-        samStatus = "已取消移动"
+        samStatus = OperitApp.appContext.getString(R.string.str_206)
     }
 
     Scaffold(
         containerColor = ComposeColor(0xFF101418),
         topBar = {
             TopAppBar(
-                title = { Text("智能选区 · 点击分割", color = ComposeColor.White, fontSize = 17.sp) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = ComposeColor.White) } },
+                title = { Text(OperitApp.appContext.getString(R.string.str_295), color = ComposeColor.White, fontSize = 17.sp) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = OperitApp.appContext.getString(R.string.str_426), tint = ComposeColor.White) } },
                 actions = {
-                    TextButton(onClick = { if (!work.isRecycled) onApply(work) }) { Text("应用", color = ComposeColor(0xFF64B5F6)) }
+                    TextButton(onClick = { if (!work.isRecycled) onApply(work) }) { Text(OperitApp.appContext.getString(R.string.str_245), color = ComposeColor(0xFF64B5F6)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = ComposeColor(0xFF101418))
             )
@@ -183,14 +183,14 @@ fun SamEditScreen(
             ) {
                 if (moving) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(onClick = { doCancelMove() }, modifier = Modifier.weight(1f)) { Text("取消", color = ComposeColor(0xFFFF8A80)) }
+                        OutlinedButton(onClick = { doCancelMove() }, modifier = Modifier.weight(1f)) { Text(OperitApp.appContext.getString(R.string.str_162), color = ComposeColor(0xFFFF8A80)) }
                         Button(onClick = { doDropMove() }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF4CAF50))) {
                             Text("放下（${moveOffsetImg.x.toInt()},${moveOffsetImg.y.toInt()}px）")
                         }
                     }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("色相", color = ComposeColor(0xFF90A4AE), fontSize = 11.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_395), color = ComposeColor(0xFF90A4AE), fontSize = 11.sp)
                         Slider(
                             value = hueDeg, onValueChange = { hueDeg = it },
                             valueRange = 0f..359f,
@@ -212,15 +212,15 @@ fun SamEditScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(onClick = { doErase() }, enabled = mask != null && !samBusy, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFFC62828))) {
                             Icon(Icons.Filled.Delete, contentDescription = null); Spacer(Modifier.width(4.dp))
-                            Text("扣除", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.str_262), fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                         Button(onClick = { doRecolor() }, enabled = mask != null && !samBusy, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF7B1FA2))) {
                             Icon(Icons.Filled.Palette, contentDescription = null); Spacer(Modifier.width(4.dp))
-                            Text("换色", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.str_280), fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                         Button(onClick = { doStartMove() }, enabled = mask != null && !samBusy, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = ComposeColor(0xFF1565C0))) {
                             Icon(Icons.Filled.OpenWith, contentDescription = null); Spacer(Modifier.width(4.dp))
-                            Text("移动", fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.str_378), fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                     }
                 }
@@ -318,16 +318,16 @@ fun SamEditScreen(
                                             val eng = obtainEngine()
                                             if (eng != null) {
                                                 samBusy = true
-                                                samStatus = "分割中..."
+                                                samStatus = OperitApp.appContext.getString(R.string.str_137)
                                                 scope.launch {
                                                     val seg = withContext(Dispatchers.IO) { runCatching { eng.segmentAt(original, pt) }.getOrNull() }
                                                     if (seg != null) {
                                                         mask?.let { if (it !== seg) it.recycle() }
                                                         mask = seg
-                                                        samStatus = "已选中该物体，可扣除/换色/移动（点其他位置重新选择）"
+                                                        samStatus = OperitApp.appContext.getString(R.string.str_233)
                                                     } else {
-                                                        samStatus = "分割失败，请点物体内部"
-                                                        Toast.makeText(context, "分割失败，请点击物体内部", Toast.LENGTH_SHORT).show()
+                                                        samStatus = OperitApp.appContext.getString(R.string.str_139)
+                                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.str_138), Toast.LENGTH_SHORT).show()
                                                     }
                                                     samBusy = false
                                                 }

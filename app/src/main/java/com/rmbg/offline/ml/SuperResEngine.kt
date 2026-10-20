@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -113,7 +115,7 @@ class SuperResEngine(
                         if (f.exists()) f else null
                     } else null
                     if (pluginPath == null || !pluginPath.exists()) {
-                        throw RuntimeException("QNN EP 插件未找到（请先部署 QNN 抠图模型或确认 QNN 运行时已安装）")
+                        throw RuntimeException(OperitApp.appContext.getString(R.string.qnn_5))
                     }
                     // ADSP_LIBRARY_PATH 指向 nativeLibDir（含 libQnnHtp*）
                     if (nativeLibDir != null && File(nativeLibDir).listFiles()?.any { it.name.contains("libQnnHtp") } == true) {
@@ -127,7 +129,7 @@ class SuperResEngine(
                     }
                     val qnnDevices = e.epDevices.filter { it.epName == "QNNExecutionProvider" }
                     if (qnnDevices.isEmpty()) {
-                        throw RuntimeException("QNN EP 设备未找到")
+                        throw RuntimeException(OperitApp.appContext.getString(R.string.qnn_6))
                     }
                     // ★★ 必须传全部 QNN 设备（ORT_QNN_ENABLE_CPU_BACKEND=1 下暴露 CPU READY + HTP 两个设备，
                     //   只取 first() 会取到错误 backend 导致 EPContext "not compatible"）
@@ -157,7 +159,7 @@ class SuperResEngine(
             } else if (modelBytes != null) {
                 e.createSession(modelBytes, opts)
             } else {
-                throw IllegalStateException("未提供模型文件或字节")
+                throw IllegalStateException(OperitApp.appContext.getString(R.string.str_307))
             }
         } catch (ex: Exception) {
             try { opts.close() } catch (_: Exception) {}

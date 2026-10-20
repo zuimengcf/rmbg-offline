@@ -110,7 +110,7 @@ fun PostProcessScreen(
 
     // 背景强度
     var bgStrength by remember { mutableStateOf(0) }
-    // ★ 4x 超分（独立按钮：点击立即超分并替换显示，不随"应用"自动执行；v4 实测链路）
+    // ★ 4x 超分（独立按钮：点击立即超分并替换显示，不随应用自动执行；v4 实测链路）
     var superResBusy by remember { mutableStateOf(false) }
     var superResFail by remember { mutableStateOf("") }   // ★ 超分失败具体原因（透传给 Toast）
     // ★ 超分模型来源显示：当前是否用导入模型（true=导入模型，false=内置 assets）
@@ -146,16 +146,16 @@ fun PostProcessScreen(
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-SUPER", "导入超分模型失败", e)
+                    android.util.Log.e("RMBG-SUPER", OperitApp.appContext.getString(R.string.str_188), e)
                     null
                 }
             }
             if (result != null && java.io.File(result).exists()) {
                 com.rmbg.offline.Prefs.superResModelPath = result
                 superResImported = true
-                Toast.makeText(context, "超分模型已导入，4x 超分将使用它", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_421), Toast.LENGTH_LONG).show()
             } else {
-                Toast.makeText(context, "超分模型导入失败：请选择包含 onnx(+bin) 的 zip 或单个 onnx", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.onnx_11), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -176,7 +176,7 @@ fun PostProcessScreen(
     var showPostControls by remember { mutableStateOf(false) }
 
     // ★★ 后处理实时预览：滑块/开关拖动时立即用脚本验证的 postLight 应用到显示图，
-    //    不用等点"应用"。basePixels = 打开时的原始 soft 像素（未硬化，半透明边缘齐全），
+    //    不用等点应用。basePixels = 打开时的原始 soft 像素（未硬化，半透明边缘齐全），
     // ★★ 后处理实时预览基底：打开时的原始 soft 像素（未硬化，半透明边缘齐全）。
     //   每次从基底重算，保证反复拖动不叠加误差。
     //   ★ 初始捕获一次（remember 无 key）；超分成功后同步更新为新大图像素，避免拖动滑块退回小图。
@@ -251,7 +251,7 @@ fun PostProcessScreen(
     // ---- SAM 智能选区（点击分割；模型：SamEngine）----
     var samMode by remember { mutableStateOf(initialSamMode) }
     var samBusy by remember { mutableStateOf(false) }
-    var samStatus by remember { mutableStateOf("点击图片上的物体进行分割") }
+    var samStatus by remember { mutableStateOf(OperitApp.appContext.getString(R.string.str_366)) }
     var samMask by remember { mutableStateOf<Bitmap?>(null) }
     var samMaskVersion by remember { mutableIntStateOf(0) }
     var samTap by remember { mutableStateOf<IntArray?>(null) }
@@ -299,7 +299,7 @@ fun PostProcessScreen(
                     samEngineRef = created
                     eng = created
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-SAM", "SAM 引擎加载失败", e)
+                    android.util.Log.e("RMBG-SAM", OperitApp.appContext.getString(R.string.sam_4), e)
                     eng = null
                 }
             }
@@ -308,10 +308,10 @@ fun PostProcessScreen(
     }
     /** 执行一次分割，更新掩码/状态（须在 samBusy=true 的协程内调用） */
     fun runSegment(src: Bitmap, px: Int, py: Int) {
-        val eng = samEngineRef ?: run { samStatus = "SAM 模型未就绪"; return@runSegment }
+        val eng = samEngineRef ?: run { samStatus = OperitApp.appContext.getString(R.string.sam_11); return@runSegment }
         scope.launch {
             samBusy = true
-            samStatus = "SAM 分析中…"
+            samStatus = OperitApp.appContext.getString(R.string.sam_3)
             try {
                 val mask = withContext(Dispatchers.IO) { eng.segmentAt(src, intArrayOf(px, py)) }
                 if (mask != null && !mask.isRecycled) {
@@ -320,13 +320,13 @@ fun PostProcessScreen(
                     samMask = mask
                     samMaskVersion++
                     samTap = intArrayOf(px, py)
-                    samStatus = "已选中，可扣除/换色/移动（点其他位置重新分割）"
+                    samStatus = OperitApp.appContext.getString(R.string.str_234)
                 } else {
-                    samStatus = "该处未识别到物体，请点击物体内部"
-                    Toast.makeText(context, "未识别到物体，请点击物体内部再试", Toast.LENGTH_SHORT).show()
+                    samStatus = OperitApp.appContext.getString(R.string.str_399)
+                    Toast.makeText(context, OperitApp.appContext.getString(R.string.str_310), Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                android.util.Log.e("RMBG-SAM", "segmentAt 失败", e)
+                android.util.Log.e("RMBG-SAM", OperitApp.appContext.getString(R.string.str_075), e)
                 samStatus = "分割失败：${e.message?.take(60) ?: "未知错误"}"
                 Toast.makeText(context, "智能选区出错：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
             } finally {
@@ -346,7 +346,7 @@ fun PostProcessScreen(
         if (samEngineRef != null) { runSegment(src, px, py); return }
         scope.launch {
             samBusy = true
-            samStatus = "准备 SAM 模型…"
+            samStatus = OperitApp.appContext.getString(R.string.sam_13)
             try {
                 // ① normal 内置复制（存在 assets 则复制；lite 无内置时内部直接返回 false）
                 com.rmbg.offline.ml.ModelManager.ensureSamFromAssets(context)
@@ -354,8 +354,8 @@ fun PostProcessScreen(
                 var dec = com.rmbg.offline.ml.ModelManager.samDecoderFile()
                 // ② 仍未就绪（lite 无内置 / 复制后仍缺）→ 自动云下载
                 if (enc == null || dec == null) {
-                    samStatus = "正在下载 SAM 模型（encoder 约 359MB）…"
-                    Toast.makeText(context, "首次使用需下载 SAM 模型（约 375MB）", Toast.LENGTH_LONG).show()
+                    samStatus = OperitApp.appContext.getString(R.string.sam_16)
+                    Toast.makeText(context, OperitApp.appContext.getString(R.string.sam_18), Toast.LENGTH_LONG).show()
                     val ok = withContext(Dispatchers.IO) {
                         com.rmbg.offline.ml.ModelManager.downloadSamModels(
                             context,
@@ -366,7 +366,7 @@ fun PostProcessScreen(
                                 }
                                 override fun onMirrorSwitch(idx: Int, name: String) { samStatus = "下载 SAM 模型…（${name}）" }
                                 override fun onMirrorError(name: String, error: String) { /* 继续尝试其他镜像 */ }
-                                override fun onDone(file: java.io.File) { samStatus = "SAM 模型下载完成…" }
+                                override fun onDone(file: java.io.File) { samStatus = OperitApp.appContext.getString(R.string.sam_7) }
                                 override fun onError(e: Exception) { /* 由外层兜底 */ }
                             }
                         )
@@ -374,8 +374,8 @@ fun PostProcessScreen(
                     enc = com.rmbg.offline.ml.ModelManager.samEncoderFile()
                     dec = com.rmbg.offline.ml.ModelManager.samDecoderFile()
                     if (!ok || enc == null || dec == null) {
-                        samStatus = "SAM 模型未就绪：下载失败，请检查网络"
-                        Toast.makeText(context, "SAM 模型下载失败，请检查网络后重试", Toast.LENGTH_LONG).show()
+                        samStatus = OperitApp.appContext.getString(R.string.sam_12)
+                        Toast.makeText(context, OperitApp.appContext.getString(R.string.sam_6), Toast.LENGTH_LONG).show()
                         return@launch
                     }
                 }
@@ -385,8 +385,8 @@ fun PostProcessScreen(
                     created.load()
                     samEngineRef = created
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-SAM", "SAM 引擎加载失败", e)
-                    samStatus = "SAM 引擎加载失败"
+                    android.util.Log.e("RMBG-SAM", OperitApp.appContext.getString(R.string.sam_4), e)
+                    samStatus = OperitApp.appContext.getString(R.string.sam_4)
                     Toast.makeText(context, "SAM 引擎加载失败: ${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                     return@launch
                 }
@@ -488,10 +488,10 @@ fun PostProcessScreen(
         containerColor = Color(0xFF101418),
         topBar = {
             TopAppBar(
-                title = { Text("编辑", color = Color.White, fontSize = 17.sp) },
+                title = { Text(OperitApp.appContext.getString(R.string.str_388), color = Color.White, fontSize = 17.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
+                        Icon(Icons.Filled.ArrowBack, contentDescription = OperitApp.appContext.getString(R.string.str_426), tint = Color.White)
                     }
                 },
                 actions = {
@@ -507,25 +507,25 @@ fun PostProcessScreen(
                                     samPreviewVersion++
                                     redoStack.forEach { try { it.recycle() } catch (_: Exception) {} }
                                     redoStack.clear()
-                                    samStatus = "已撤销预览"
+                                    samStatus = OperitApp.appContext.getString(R.string.str_229)
                                 }
                                 undoStack.isNotEmpty() -> {
                                     // 画笔/后处理撤销
                                     undoBrush()
                                 }
-                                else -> Toast.makeText(context, "没有可撤销的操作", Toast.LENGTH_SHORT).show()
+                                else -> Toast.makeText(context, OperitApp.appContext.getString(R.string.str_359), Toast.LENGTH_SHORT).show()
                             }
                         },
                         enabled = !superResBusy && (samPreviewBitmap != null || undoStack.isNotEmpty())
-                    ) { Icon(Icons.Filled.Undo, contentDescription = "撤销", tint = Color(0xFFFFB74D)) }
+                    ) { Icon(Icons.Filled.Undo, contentDescription = OperitApp.appContext.getString(R.string.str_283), tint = Color(0xFFFFB74D)) }
                     // ★ 重做（前进）
                     IconButton(
                         onClick = {
                             if (redoStack.isNotEmpty()) redoBrush()
-                            else Toast.makeText(context, "没有可重做的操作", Toast.LENGTH_SHORT).show()
+                            else Toast.makeText(context, OperitApp.appContext.getString(R.string.str_361), Toast.LENGTH_SHORT).show()
                         },
                         enabled = !superResBusy && redoStack.isNotEmpty()
-                    ) { Icon(Icons.Filled.Redo, contentDescription = "重做", tint = Color(0xFF4FC3F7)) }
+                    ) { Icon(Icons.Filled.Redo, contentDescription = OperitApp.appContext.getString(R.string.str_446), tint = Color(0xFF4FC3F7)) }
                     // ★ 调色（选区模式专属，折叠在顶部）：展开/收起色彩管理面板
                     if (samMode) {
                         TextButton(
@@ -534,12 +534,12 @@ fun PostProcessScreen(
                         ) {
                             Icon(
                                 if (showSamColorPanel) Icons.Filled.KeyboardArrowUp else Icons.Filled.Palette,
-                                contentDescription = "调色",
+                                contentDescription = OperitApp.appContext.getString(R.string.str_405),
                                 tint = Color(0xFFCE93D8),
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(2.dp))
-                            Text(if (showSamColorPanel) "收起调色" else "调色", color = Color(0xFFCE93D8))
+                            Text(if (showSamColorPanel) OperitApp.appContext.getString(R.string.str_286) else OperitApp.appContext.getString(R.string.str_405), color = Color(0xFFCE93D8))
                         }
                     }
                     // ★ 全图调色（后处理模式专属，折叠在顶栏）
@@ -549,12 +549,12 @@ fun PostProcessScreen(
                         ) {
                             Icon(
                                 if (showPostColor) Icons.Filled.KeyboardArrowUp else Icons.Filled.Palette,
-                                contentDescription = "全图调色",
+                                contentDescription = OperitApp.appContext.getString(R.string.str_120),
                                 tint = Color(0xFFCE93D8),
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(2.dp))
-                            Text(if (showPostColor) "收起" else "调色", color = Color(0xFFCE93D8))
+                            Text(if (showPostColor) OperitApp.appContext.getString(R.string.str_284) else OperitApp.appContext.getString(R.string.str_405), color = Color(0xFFCE93D8))
                         }
                     }
                     TextButton(
@@ -570,7 +570,7 @@ fun PostProcessScreen(
                             } else cur
                             scope.launch {
                                 bgStrength = 0; decontaminate = 0f; shrink = 0; hardenTh = 0
-                                Toast.makeText(context, "已应用", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_218), Toast.LENGTH_SHORT).show()
                                 onApply(finalBmp)
                             }
                         },
@@ -579,7 +579,7 @@ fun PostProcessScreen(
                             bgStrength > 0 || decontaminate > 0f || shrink != 0 || hardenTh > 0 ||
                             strokeCount > 0 || samPreviewBitmap != null || samMask != null
                         )
-                    ) { Text("应用", color = Color(0xFF64B5F6)) }
+                    ) { Text(OperitApp.appContext.getString(R.string.str_245), color = Color(0xFF64B5F6)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF101418))
             )
@@ -611,30 +611,30 @@ fun PostProcessScreen(
                     }
                     // 后处理
                     Box {
-                        chipSel(!brushMode && !samMode, "后处理")
+                        chipSel(!brushMode && !samMode, OperitApp.appContext.getString(R.string.str_170))
                         // 点击层（透明，拦截点击）；选区有未完成编辑时需先取消/应用才能切走
                         Box(Modifier.matchParentSize().clickable {
-                            if (samBusy) { Toast.makeText(context, "选区分析中，请稍候", Toast.LENGTH_SHORT).show(); return@clickable }
+                            if (samBusy) { Toast.makeText(context, OperitApp.appContext.getString(R.string.str_435), Toast.LENGTH_SHORT).show(); return@clickable }
                             if (samMoving || samPreviewBitmap != null) {
-                                Toast.makeText(context, "请先「取消/放下」当前选区操作再切换", Toast.LENGTH_SHORT).show(); return@clickable
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_400), Toast.LENGTH_SHORT).show(); return@clickable
                             }
                             brushMode = false; samMode = false
                         })
                     }
                     // 画笔
                     Box {
-                        chipSel(brushMode, "画笔")
+                        chipSel(brushMode, OperitApp.appContext.getString(R.string.str_374))
                         Box(Modifier.matchParentSize().clickable {
-                            if (samBusy) { Toast.makeText(context, "选区分析中，请稍候", Toast.LENGTH_SHORT).show(); return@clickable }
+                            if (samBusy) { Toast.makeText(context, OperitApp.appContext.getString(R.string.str_435), Toast.LENGTH_SHORT).show(); return@clickable }
                             if (samMoving || samPreviewBitmap != null) {
-                                Toast.makeText(context, "请先「取消/放下」当前选区操作再切换", Toast.LENGTH_SHORT).show(); return@clickable
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_400), Toast.LENGTH_SHORT).show(); return@clickable
                             }
                             brushMode = true; samMode = false
                         })
                     }
                     // 选区（切回时保留已分割的 mask 等状态，不清理）
                     Box {
-                        chipSel(samMode, "选区")
+                        chipSel(samMode, OperitApp.appContext.getString(R.string.str_430))
                         Box(Modifier.matchParentSize().clickable {
                             brushMode = false; samMode = true
                         })
@@ -656,7 +656,7 @@ fun PostProcessScreen(
                                 )
                             },
                         contentAlignment = Alignment.Center
-                    ) { Text("对比", color = Color(0xFFFFB74D), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp)) }
+                    ) { Text(OperitApp.appContext.getString(R.string.str_182), color = Color(0xFFFFB74D), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp)) }
                     // ★ 按住预览：画布显示背景色+结果图（导出效果），松手恢复
                     Box(
                         modifier = Modifier
@@ -673,7 +673,7 @@ fun PostProcessScreen(
                                 )
                             },
                         contentAlignment = Alignment.Center
-                    ) { Text("预览", color = Color(0xFF4FC3F7), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp)) }
+                    ) { Text(OperitApp.appContext.getString(R.string.str_451), color = Color(0xFF4FC3F7), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp)) }
                     Text("${strokeCount} 笔", color = Color(0xFF64B5F6), fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(4.dp))
@@ -706,7 +706,7 @@ fun PostProcessScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFFF8A80))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("取消", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8A80))
+                                    Text(OperitApp.appContext.getString(R.string.str_162), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8A80))
                                 }
                             }
                             Box(
@@ -758,7 +758,7 @@ fun PostProcessScreen(
                                                     samPreviewBitmap?.let { if (it !== out && it.isRecycled.not()) { try { it.recycle() } catch (_: Exception) {} } }
                                                     samPreviewBitmap = out
                                                     samPreviewVersion++
-                                                    samStatus = "已预览移动 · 点「应用」完成，点「取消」还原"
+                                                    samStatus = OperitApp.appContext.getString(R.string.str_243)
                                                 }
                                             }
                                         }
@@ -773,7 +773,7 @@ fun PostProcessScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
                                     Spacer(Modifier.width(6.dp))
-                                    Text("放下", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text(OperitApp.appContext.getString(R.string.str_287), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                 }
                             }
                         }
@@ -802,7 +802,7 @@ fun PostProcessScreen(
                                                 samPreviewBitmap?.let { if (it !== out && it.isRecycled.not()) { try { it.recycle() } catch (_: Exception) {} } }
                                                 samPreviewBitmap = out
                                                 samPreviewVersion++
-                                                samStatus = "已预览扣除效果 · 点「应用」完成，点「取消」还原"
+                                                samStatus = OperitApp.appContext.getString(R.string.str_241)
                                             }
                                         }
                                     },
@@ -816,7 +816,7 @@ fun PostProcessScreen(
                                         tint = if (selErase) Color.White else Color(0xFFFF5252)
                                     )
                                     Spacer(Modifier.height(2.dp))
-                                    Text("扣除", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (selErase) Color.White else Color(0xFFFF5252))
+                                    Text(OperitApp.appContext.getString(R.string.str_262), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (selErase) Color.White else Color(0xFFFF5252))
                                 }
                             }
                             // ★ 换色
@@ -845,7 +845,7 @@ fun PostProcessScreen(
                                                 samPreviewBitmap?.let { if (it !== out && it.isRecycled.not()) { try { it.recycle() } catch (_: Exception) {} } }
                                                 samPreviewBitmap = out
                                                 samPreviewVersion++
-                                                samStatus = if (samHue < 0f) "已预览恢复原色 · 点「应用」完成" else "已预览换色 · 点「应用」完成"
+                                                samStatus = if (samHue < 0f) OperitApp.appContext.getString(R.string.str_240) else OperitApp.appContext.getString(R.string.str_242)
                                             }
                                         }
                                     },
@@ -859,7 +859,7 @@ fun PostProcessScreen(
                                         tint = if (selColor) Color.White else Color(0xFFCE93D8)
                                     )
                                     Spacer(Modifier.height(2.dp))
-                                    Text(if (samHue < 0f) "恢复原色" else "换色", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (selColor) Color.White else Color(0xFFCE93D8))
+                                    Text(if (samHue < 0f) OperitApp.appContext.getString(R.string.str_258) else OperitApp.appContext.getString(R.string.str_280), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (selColor) Color.White else Color(0xFFCE93D8))
                                 }
                             }
                             // ★ 移动
@@ -938,7 +938,7 @@ fun PostProcessScreen(
                                                     samObjW = 0f; samObjH = 0f
                                                 }
                                             }
-                                            samStatus = "拖动移动物体，点「放下」完成"
+                                            samStatus = OperitApp.appContext.getString(R.string.str_277)
                                         }
                                     },
                                 contentAlignment = Alignment.Center
@@ -951,7 +951,7 @@ fun PostProcessScreen(
                                         tint = if (selMove) Color.White else Color(0xFF64B5F6)
                                     )
                                     Spacer(Modifier.height(2.dp))
-                                    Text("移动", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (selMove) Color.White else Color(0xFF64B5F6))
+                                    Text(OperitApp.appContext.getString(R.string.str_378), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (selMove) Color.White else Color(0xFF64B5F6))
                                 }
                             }
                         }
@@ -971,14 +971,14 @@ fun PostProcessScreen(
                                             samPreviewBitmap?.let { if (it.isRecycled.not()) { try { it.recycle() } catch (_: Exception) {} } }
                                             samPreviewBitmap = null
                                             samPreviewVersion++
-                                            samStatus = "已取消预览"
+                                            samStatus = OperitApp.appContext.getString(R.string.str_207)
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFFF8A80))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("取消", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8A80))
+                                        Text(OperitApp.appContext.getString(R.string.str_162), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8A80))
                                     }
                                 }
                                 Box(
@@ -1000,14 +1000,14 @@ fun PostProcessScreen(
                                             // ★ 选区持久化：应用后【不清除】samMask/samTap，保持选中态——不退出就一直选中，
                                             //   后续可继续调色/扣除/移动（外溢调色的根因之一就是应用后选区丢失→再操作时掩码失效）。
                                             //   若显示图尺寸已变（掩码尺寸不匹配），后续各操作内部会按尺寸适配，绝不误伤未选中区。
-                                            samStatus = "已应用 · 选区保持选中，可继续扣除/换色/移动"
+                                            samStatus = OperitApp.appContext.getString(R.string.str_219)
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
                                         Spacer(Modifier.width(6.dp))
-                                        Text("应用", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                        Text(OperitApp.appContext.getString(R.string.str_245), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                     }
                                 }
                             }
@@ -1024,7 +1024,7 @@ fun PostProcessScreen(
                                     if (c.isRecycled || superResBusy) return@OutlinedButton
                                     // 防无限超分：已是超分产物或 ≥2048 直接拒绝
                                     if (c.width >= 2048 || c.height >= 2048) {
-                                        Toast.makeText(context, "当前图已是最佳分辨率（2048），不再叠加超分", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.str_255), Toast.LENGTH_SHORT).show()
                                         return@OutlinedButton
                                     }
                                     scope.launch {
@@ -1046,7 +1046,7 @@ fun PostProcessScreen(
                                                     }
                                                 } catch (e: Exception) {
                                                     // ★ 记录具体失败原因（真机排查超分失败用）
-                                                    android.util.Log.e("RMBG-SUPER", "后处理页超分失败", e)
+                                                    android.util.Log.e("RMBG-SUPER", OperitApp.appContext.getString(R.string.str_171), e)
                                                     // ★ 把具体错误透传给 Toast，便于真机定位
                                                     val err = e.message?.take(80) ?: e.javaClass.simpleName
                                                     superResFail = "超分失败：$err"
@@ -1068,7 +1068,7 @@ fun PostProcessScreen(
                                             scale = 1f; offset = Offset.Zero
                                             Toast.makeText(context, "已 4x 超分：${up.width}×${up.height}", Toast.LENGTH_SHORT).show()
                                         } else {
-                                            Toast.makeText(context, if (superResFail.isNotEmpty()) superResFail else "超分失败（模型不可用或内存不足）", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, if (superResFail.isNotEmpty()) superResFail else OperitApp.appContext.getString(R.string.str_413), Toast.LENGTH_LONG).show()
                                             superResFail = ""
                                         }
                                     }
@@ -1081,7 +1081,7 @@ fun PostProcessScreen(
                             ) {
                                 Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFFFF8F00))
                                 Spacer(Modifier.width(4.dp))
-                                Text(if (superResBusy) "超分中…" else "4x 超分", fontSize = 12.sp, color = Color(0xFFFF8F00))
+                                Text(if (superResBusy) OperitApp.appContext.getString(R.string.str_411) else OperitApp.appContext.getString(R.string.str_002), fontSize = 12.sp, color = Color(0xFFFF8F00))
                             }
                             // ★ 导入超分模型入口 + 当前来源（★ 独立于抠图模型导入：超分模型存 superres/ 目录，绝不混入抠图列表）
                             TextButton(
@@ -1380,10 +1380,10 @@ fun PostProcessScreen(
                         if (viewMode == 2 || samMoving || samPreviewBitmap != null) {
                             val bgName = com.rmbg.offline.Prefs.viewerBgColor
                             val bgSolid: Color? = when (bgName) {
-                                "白色" -> Color.White
-                                "黑色" -> Color.Black
-                                "浅灰" -> Color(0xFFBDBDBD)
-                                "绿色" -> Color(0xFF4CAF50)
+                                OperitApp.appContext.getString(R.string.str_375) -> Color.White
+                                OperitApp.appContext.getString(R.string.str_457) -> Color.Black
+                                OperitApp.appContext.getString(R.string.str_362) -> Color(0xFFBDBDBD)
+                                OperitApp.appContext.getString(R.string.str_387) -> Color(0xFF4CAF50)
                                 else -> null // 棋盘
                             }
                             if (bgSolid != null) {
@@ -1678,7 +1678,7 @@ fun PostProcessScreen(
                                     .background(if (postHue < 0f) Color(0xFF90A4AE) else samHueToColor(postHue))
                                     .border(1.dp, Color(0xFFFFFFFF).copy(alpha = 0.35f), RoundedCornerShape(6.dp))
                             )
-                            Text("色相", color = Color(0xFF90A4AE), fontSize = 12.sp)
+                            Text(OperitApp.appContext.getString(R.string.str_395), color = Color(0xFF90A4AE), fontSize = 12.sp)
                             Slider(
                                 value = if (postHue < 0f) 0f else postHue,
                                 onValueChange = { h ->
@@ -1788,7 +1788,7 @@ fun PostProcessScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp)) {
                                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
                                     Spacer(Modifier.width(4.dp))
-                                    Text("应用", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text(OperitApp.appContext.getString(R.string.str_245), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                 }
                             }
                         }
@@ -1817,7 +1817,7 @@ fun PostProcessScreen(
                                     .background(samHueToColor(samHue))
                                     .border(1.dp, Color(0xFFFFFFFF).copy(alpha = 0.35f), RoundedCornerShape(6.dp))
                             )
-                            Text("色相", color = Color(0xFF90A4AE), fontSize = 12.sp)
+                            Text(OperitApp.appContext.getString(R.string.str_395), color = Color(0xFF90A4AE), fontSize = 12.sp)
                             Slider(
                                 value = samHue.coerceIn(0f, 359f),
                                 onValueChange = { h ->
@@ -1970,7 +1970,7 @@ fun PostProcessScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp)) {
                                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
                                     Spacer(Modifier.width(4.dp))
-                                    Text("应用", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text(OperitApp.appContext.getString(R.string.str_245), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                 }
                             }
                         }

@@ -81,7 +81,7 @@ class DownloadService : Service() {
         //   降级为普通后台服务继续下载即可（保活通知可选，不强求）。
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Notifications.hasPermission(this)) {
-                startForeground(NOTIF_ID, buildNotification("正在准备下载模型…", 0, 0, 0))
+                startForeground(NOTIF_ID, buildNotification(OperitApp.appContext.getString(R.string.str_352), 0, 0, 0))
             }
         } catch (e: Exception) {
             android.util.Log.w("DownloadService", "startForeground failed (degrade to normal): ${e.message}")
@@ -135,10 +135,10 @@ class DownloadService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "模型下载",
+                OperitApp.appContext.getString(R.string.str_330),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "模型下载进度与完成提醒"
+                description = OperitApp.appContext.getString(R.string.str_331)
                 setShowBadge(false)
             }
             val nm = getSystemService(NotificationManager::class.java)

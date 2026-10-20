@@ -33,10 +33,10 @@ object Notifications {
             val nm = context.getSystemService(NotificationManager::class.java)
             val ch = NotificationChannel(
                 CHANNEL_DONE,
-                "抠图完成",
+                OperitApp.appContext.getString(R.string.str_268),
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "抠图处理完成提醒"
+                description = OperitApp.appContext.getString(R.string.str_267)
                 setShowBadge(true)
             }
             nm.createNotificationChannel(ch)
@@ -49,10 +49,10 @@ object Notifications {
             val nm = context.getSystemService(NotificationManager::class.java)
             val ch = NotificationChannel(
                 CHANNEL_DOWNLOAD,
-                "模型下载",
+                OperitApp.appContext.getString(R.string.str_330),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "模型下载进度与完成提醒"
+                description = OperitApp.appContext.getString(R.string.str_331)
                 setShowBadge(false)
             }
             nm.createNotificationChannel(ch)
@@ -75,8 +75,8 @@ object Notifications {
                 Notification.Builder(context)
             }
             val n = builder
-                .setContentTitle("抠图完成")
-                .setContentText("点击查看结果")
+                .setContentTitle(OperitApp.appContext.getString(R.string.str_268))
+                .setContentText(OperitApp.appContext.getString(R.string.str_370))
                 .setSmallIcon(android.R.drawable.ic_menu_gallery)
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)

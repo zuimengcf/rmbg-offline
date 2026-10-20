@@ -71,7 +71,7 @@ object BackupManager {
             ZipOutputStream(outStream).use { zos ->
                 // manifest.json
                 val manifest = JSONObject().apply {
-                    put("app", "RMBG 离线抠图")
+                    put("app", OperitApp.appContext.getString(R.string.rmbg))
                     put("backup_version", BACKUP_VERSION)
                     put("export_time", System.currentTimeMillis())
                     put("history_files", countFiles(histDir))
@@ -97,7 +97,7 @@ object BackupManager {
             }
             true
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-BACKUP", "导出失败", e)
+            android.util.Log.e("RMBG-BACKUP", OperitApp.appContext.getString(R.string.str_193), e)
             false
         }
     }
@@ -135,7 +135,7 @@ object BackupManager {
                         val dest = File(histDir, baseName)
                         // ★ zip 炸弹防护：单次解压总量限制（历史图几千张 × 几MB 内，上限 4GB）
                         if (dest.length() + e.size > 4L * 1024 * 1024 * 1024) {
-                            android.util.Log.e("RMBG-BACKUP", "解压超限，中止")
+                            android.util.Log.e("RMBG-BACKUP", OperitApp.appContext.getString(R.string.str_398))
                             return false
                         }
                         zi.copyTo(FileOutputStream(dest))
@@ -150,7 +150,7 @@ object BackupManager {
             }
             true
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-BACKUP", "导入失败", e)
+            android.util.Log.e("RMBG-BACKUP", OperitApp.appContext.getString(R.string.str_184), e)
             false
         }
     }
@@ -197,7 +197,7 @@ object BackupManager {
             }
             ed.apply()
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-BACKUP", "还原配置失败", e)
+            android.util.Log.e("RMBG-BACKUP", OperitApp.appContext.getString(R.string.str_427), e)
         }
     }
 

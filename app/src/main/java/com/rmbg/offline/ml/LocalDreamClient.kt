@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -135,7 +137,7 @@ object LocalDreamClient {
             }
 
             errorMsg?.let { throw RuntimeException("LocalDream: $it") }
-            val b64 = imageB64 ?: throw RuntimeException("LocalDream 未返回图片")
+            val b64 = imageB64 ?: throw RuntimeException(OperitApp.appContext.getString(R.string.str_025))
 
             // 解码 RGB 像素 → Bitmap（LocalDream 返回的是裸 RGB 字节，BGR 顺序见插件 r2b 转换）
             val bytes = Base64.decode(b64, Base64.DEFAULT)

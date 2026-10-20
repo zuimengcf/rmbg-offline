@@ -222,10 +222,10 @@ private fun AboutPage(
         // 顶部：返回 + 标题
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Filled.ArrowBack, contentDescription = OperitApp.appContext.getString(R.string.str_426), tint = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.width(8.dp))
-            Text("关于", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(OperitApp.appContext.getString(R.string.str_124), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
 
         // App 图标 + 名称 + 版本号
@@ -247,7 +247,7 @@ private fun AboutPage(
                 ) {
                     Icon(Icons.Filled.ContentCut, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
                 }
-                Text("RMBG 离线抠图", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(OperitApp.appContext.getString(R.string.rmbg), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 // ★ 版本 + 版本类型（完整版/精简版 Lite）
                 Text(
                     text = "版本 v$versionName${if (BuildConfig.IS_LITE) "（Lite 精简版）" else "（完整版）"}",
@@ -266,9 +266,9 @@ private fun AboutPage(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("完全本地离线推理", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(OperitApp.appContext.getString(R.string.str_179), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "图片不会上传到任何服务器，隐私安全。抠图、重绘、历史记录全部在设备本地完成。",
+                    OperitApp.appContext.getString(R.string.str_174),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -284,38 +284,38 @@ private fun AboutPage(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("更新日志", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(OperitApp.appContext.getString(R.string.str_297), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 ChangelogRow("v1.3.0", listOf(
-                    "导入导出：历史记录与应用配置一键备份/还原，模型导出",
-                    "模型功能：本地模型导入、云端下载、智能匹配设备加速",
-                    "历史记录：历史分支管理、多视图浏览、批量保存",
-                    "分享功能：系统分享导入/导出，接受分享后可选自动抠图"
+                    OperitApp.appContext.getString(R.string.str_186),
+                    OperitApp.appContext.getString(R.string.str_333),
+                    OperitApp.appContext.getString(R.string.str_159),
+                    OperitApp.appContext.getString(R.string.str_136)
                 ))
                 ChangelogRow("v1.2.0", listOf(
-                    "通知功能：抠图完成常驻通知提醒",
-                    "后台保活：防止模型加载后被系统回收"
+                    OperitApp.appContext.getString(R.string.str_440),
+                    OperitApp.appContext.getString(R.string.str_169)
                 ))
                 ChangelogRow("v1.1.2", listOf(
-                    "超分模型云下载：按设备 SoC/NPU 自动匹配对应版本（QNN HTP / CPU 自适应）",
-                    "Anime-Seg 支持多 NPU 变体，按设备自动选择下载链接",
-                    "模型页新增超分模型下载入口，与内置模型同格式",
-                    "内置模型列表按设备能力智能匹配"
+                    OperitApp.appContext.getString(R.string.npu_4),
+                    OperitApp.appContext.getString(R.string.npu),
+                    OperitApp.appContext.getString(R.string.str_346),
+                    OperitApp.appContext.getString(R.string.str_130)
                 ))
                 ChangelogRow("v1.1.1", listOf(
-                    "双版本：完整版（内置 QNN 模型）/ 精简版（云下载）",
-                    "QNN EP（骁龙 DSP）硬件加速，抠图更快更省电",
-                    "AI 重绘（Stable Diffusion）本地生成",
-                    "下载可中途停止，下载前自动检查网络连通性",
-                    "精简安装体积：不再向存储区复制重复运行库"
+                    OperitApp.appContext.getString(R.string.qnn_29),
+                    OperitApp.appContext.getString(R.string.qnn_8),
+                    OperitApp.appContext.getString(R.string.ai_10),
+                    OperitApp.appContext.getString(R.string.str_111),
+                    OperitApp.appContext.getString(R.string.str_379)
                 ))
                 ChangelogRow("v1.1.0", listOf(
-                    "多镜像源下载，断点续传 + 进度通知",
-                    "模型管理：导入本地 / 切换 / 删除",
-                    "历史记录与分享"
+                    OperitApp.appContext.getString(R.string.str_177),
+                    OperitApp.appContext.getString(R.string.str_345),
+                    OperitApp.appContext.getString(R.string.str_157)
                 ))
                 ChangelogRow("v1.0.0", listOf(
-                    "RMBG 离线抠图上线",
-                    "ONNX Runtime CPU 推理，支持批量抠图"
+                    OperitApp.appContext.getString(R.string.rmbg_2),
+                    OperitApp.appContext.getString(R.string.onnx_2)
                 ))
             }
         }
@@ -329,9 +329,9 @@ private fun AboutPage(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("技术栈", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(OperitApp.appContext.getString(R.string.str_265), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "ONNX Runtime · QNN EP（骁龙 DSP 加速）· Jetpack Compose",
+                    OperitApp.appContext.getString(R.string.onnx_3),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -368,7 +368,7 @@ private fun AboutPage(
                     Text("🐙", style = MaterialTheme.typography.titleMedium)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("GitHub 项目", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(OperitApp.appContext.getString(R.string.str_023), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Text(
                         "github.com/zuimengcf/rmbg-offline",
                         style = MaterialTheme.typography.bodySmall,
@@ -377,7 +377,7 @@ private fun AboutPage(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                Icon(Icons.Filled.OpenInNew, contentDescription = "打开", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.OpenInNew, contentDescription = OperitApp.appContext.getString(R.string.str_260), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
             }
         }
 
@@ -390,14 +390,14 @@ private fun AboutPage(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("开源", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(OperitApp.appContext.getString(R.string.str_247), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "开源协议：Apache License 2.0",
+                    OperitApp.appContext.getString(R.string.str_248),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "模型仓库：Hugging Face（详见项目 README）",
+                    OperitApp.appContext.getString(R.string.str_332),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -446,10 +446,10 @@ private fun ExportPage(
         // 顶部：返回 + 标题
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Filled.ArrowBack, contentDescription = OperitApp.appContext.getString(R.string.str_426), tint = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.width(8.dp))
-            Text("导出 / 导入", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(OperitApp.appContext.getString(R.string.str_191), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
 
         // ===== 历史 + 配置备份 =====
@@ -464,7 +464,7 @@ private fun ExportPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text("历史 + 配置备份", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(OperitApp.appContext.getString(R.string.str_154), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     Text(
                         formatSize(BackupManager.dirSize(BackupManager.historyDir(context))),
                         style = MaterialTheme.typography.labelSmall,
@@ -472,7 +472,7 @@ private fun ExportPage(
                     )
                 }
                 Text(
-                    "全部抠图历史记录 + 应用设置（模型/抠图参数/加速/预设等）打包为一个 zip，可随时导回。",
+                    OperitApp.appContext.getString(R.string.zip_9),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -485,7 +485,7 @@ private fun ExportPage(
                     ) {
                         Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("导出备份")
+                        Text(OperitApp.appContext.getString(R.string.str_192))
                     }
                     OutlinedButton(
                         onClick = onImportBackup,
@@ -495,7 +495,7 @@ private fun ExportPage(
                     ) {
                         Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("导入还原")
+                        Text(OperitApp.appContext.getString(R.string.str_189))
                     }
                 }
                 if (backupBusy) {
@@ -516,14 +516,14 @@ private fun ExportPage(
 
         // ===== 模型导出（逐个单独导出）=====
         Text(
-            "模型导出（逐个单独导出）",
+            OperitApp.appContext.getString(R.string.str_336),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
         )
         Text(
-            "选择下方任意一个已就绪的模型，点「导出」保存为独立文件（QNN/本地模型含 bin 时打包为 zip）。",
+            OperitApp.appContext.getString(R.string.qnn_37),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -546,7 +546,7 @@ private fun ExportPage(
 
         // ---- QNN 内置模型 ----
         ModelManager.qnnModels.forEach { bm ->
-            // ★ 超分模型（qnn_realesrgan）已在下方"超分模型"分区单独展示，这里跳过避免重复
+            // ★ 超分模型（qnn_realesrgan）已在下方超分模型分区单独展示，这里跳过避免重复
             if (bm.id == "qnn_realesrgan") return@forEach
             val ready = ModelManager.isBuiltinModelDownloaded(bm)
             val onnxF = ModelManager.qnnContextFileFor(bm.id)
@@ -554,7 +554,7 @@ private fun ExportPage(
             val files = listOfNotNull(onnxF?.takeIf { it.exists() && it.length() > 0 }, binF?.takeIf { it.exists() && it.length() > 0 })
             ExportModelRow(
                 title = bm.name,
-                subtitle = "内置 QNN 模型（骁龙 DSP）" + if (bm.description.isNotEmpty()) " · ${bm.description}" else "",
+                subtitle = OperitApp.appContext.getString(R.string.qnn_27) + if (bm.description.isNotEmpty()) " · ${bm.description}" else "",
                 ready = ready && files.isNotEmpty(),
                 size = files.sumOf { it.length() },
                 enabled = ready && files.isNotEmpty() && !modelExportBusy,
@@ -573,7 +573,7 @@ private fun ExportPage(
                 val files = listOfNotNull(f.takeIf { it.exists() && it.length() > 0 }, binF)
                 ExportModelRow(
                     title = lm.displayName,
-                    subtitle = "本地导入模型 · ${formatSize(lm.sizeBytes)}" + if (binF != null) "（含 QNN bin）" else "",
+                    subtitle = "本地导入模型 · ${formatSize(lm.sizeBytes)}" + if (binF != null) OperitApp.appContext.getString(R.string.qnn_38) else "",
                     ready = files.isNotEmpty(),
                     size = files.sumOf { it.length() },
                     enabled = files.isNotEmpty() && !modelExportBusy,
@@ -588,8 +588,8 @@ private fun ExportPage(
         val srReady = com.rmbg.offline.Prefs.superResModelPath.isNotEmpty() ||
             srFiles.any { it.name == "superres_model.onnx" }
         ExportModelRow(
-            title = "超分模型",
-            subtitle = if (srFiles.isNotEmpty()) "QNN/CPU 超分模型文件 · ${srFiles.map { it.name }.joinToString(" + ")}" else "未导入自定义超分模型（使用内置 CPU 超分）",
+            title = OperitApp.appContext.getString(R.string.str_415),
+            subtitle = if (srFiles.isNotEmpty()) "QNN/CPU 超分模型文件 · ${srFiles.map { it.name }.joinToString(" + ")}" else OperitApp.appContext.getString(R.string.cpu_8),
             ready = srReady && srFiles.isNotEmpty(),
             size = srFiles.sumOf { it.length() },
             enabled = srReady && srFiles.isNotEmpty() && !modelExportBusy,
@@ -601,8 +601,8 @@ private fun ExportPage(
         val samFiles = samDir.listFiles()?.filter { it.isFile && it.length() > 0 } ?: emptyList()
         val samReady = ModelManager.isSamReady()
         ExportModelRow(
-            title = "SAM 智能分割模型",
-            subtitle = if (samFiles.isNotEmpty()) "encoder + decoder · ${samFiles.map { it.name }.joinToString(" + ")}" else "未部署 SAM 模型",
+            title = OperitApp.appContext.getString(R.string.sam_5),
+            subtitle = if (samFiles.isNotEmpty()) "encoder + decoder · ${samFiles.map { it.name }.joinToString(" + ")}" else OperitApp.appContext.getString(R.string.sam_14),
             ready = samReady && samFiles.isNotEmpty(),
             size = samFiles.sumOf { it.length() },
             enabled = samReady && samFiles.isNotEmpty() && !modelExportBusy,
@@ -613,7 +613,7 @@ private fun ExportPage(
         val deployedRedraw = AiRedrawEngine.deployedModels(context)
         if (deployedRedraw.isNotEmpty()) {
             Text(
-                "AI 重绘模型（大文件，谨慎选择）",
+                OperitApp.appContext.getString(R.string.ai_7),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF7B1FA2),
@@ -696,7 +696,7 @@ private fun ExportModelRow(
             ) {
                 Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(if (ready) "导出" else "未就绪", fontSize = 13.sp)
+                Text(if (ready) OperitApp.appContext.getString(R.string.str_190) else OperitApp.appContext.getString(R.string.str_303), fontSize = 13.sp)
             }
         }
     }
@@ -722,7 +722,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var resultBitmap by remember { mutableStateOf(ProjectStateManager.loadResult(context)) }
     // ★ 历史分组键（当前会话）：记录"这棵历史树属于哪张原始原图"。
     //   选新图/批量下一张时 = computeOriginalKey(新图)（新图开新分支）；
-    //   对结果"再次抠图"时保持不变（结果归原图分支：A→B→C 同一条链）。
+    //   对结果再次抠图时保持不变（结果归原图分支：A→B→C 同一条链）。
     //   保存历史时用它作 originalKey（不再对每次输入重算，避免结果图另立分支）。
     var currentHistoryKey by remember { mutableStateOf("") }
     var threshold by remember { mutableFloatStateOf(Prefs.threshold) }
@@ -783,7 +783,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     }
     // ★ 默认状态文案：按当前选中模型动态生成（QNN 模型=部署，CPU 模型=下载，体积取真实值）
     val initialStatus = if (modelReady) {
-        "模型已就绪，选择图片开始抠图"
+        OperitApp.appContext.getString(R.string.str_341)
     } else {
         val curBm = ModelManager.builtinModels.find { it.id == restoredModelIdSafe }
         if (curBm?.isQnn == true) {
@@ -869,7 +869,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var tileProgressText by remember { mutableStateOf("") }
     var isTiling by remember { mutableStateOf(false) }
     var currentTab by remember { mutableStateOf(0) }
-    // ★ 关于页：独立二级页面（设置 Tab 的"关于"卡片点击后进入）
+    // ★ 关于页：独立二级页面（设置 Tab 的关于卡片点击后进入）
     var showAboutPage by remember { mutableStateOf(false) }
     // ★ 导出页：独立二级页面（设置 Tab 的"数据备份/导出"卡片点击后进入）
     var showExportPage by remember { mutableStateOf(false) }
@@ -1076,7 +1076,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         // ★ 无限超分闸：当前图已是上次超分结果（尺寸匹配）或已超分上限（≥2048）→ 拒绝
         val alreadySuper = (superResLastW == cur.width && superResLastH == cur.height && superResLastW > 0)
         if (alreadySuper || cur.width >= 2048 || cur.height >= 2048) {
-            Toast.makeText(context, "当前图已是最佳分辨率（2048），不再叠加超分", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_255), Toast.LENGTH_SHORT).show()
             return
         }
         scope.launch {
@@ -1088,7 +1088,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 delay(300_000)
                 if (superResBusy) {
                     superResBusy = false
-                    Toast.makeText(context, "⚠️ 超分超时（5 分钟无响应），已停止等待", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, OperitApp.appContext.getString(R.string.str_086), Toast.LENGTH_LONG).show()
                 }
             }
             val up = try {
@@ -1102,7 +1102,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         } else {
                             val model = com.rmbg.offline.ml.SuperResEngine.loadFromAssets(context, "models/realesrgan_anime6b.onnx")
                             if (model == null) {
-                                failMsg = "模型加载失败（assets 缺失）"
+                                failMsg = OperitApp.appContext.getString(R.string.str_334)
                                 null
                             } else {
                                 val eng = com.rmbg.offline.ml.SuperResEngine(threads = 4, modelBytes = model)
@@ -1111,7 +1111,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         }
                     } catch (e: Exception) {
                         // ★ 记录具体失败原因（真机排查超分失败用）
-                        android.util.Log.e("RMBG-SUPER", "超分失败", e)
+                        android.util.Log.e("RMBG-SUPER", OperitApp.appContext.getString(R.string.str_412), e)
                         failMsg = "超分失败：${e.message?.take(80) ?: e.javaClass.simpleName}"
                         null
                     }
@@ -1133,7 +1133,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 statusText = "已 4x 超分：${up.width}×${up.height}（临时图，不写入历史，可保存/分享）"
                 Toast.makeText(context, "已 4x 超分 ${up.width}×${up.height}", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(context, if (failMsg.isNotEmpty()) failMsg else "超分失败（模型不可用或内存不足），已保留原图", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, if (failMsg.isNotEmpty()) failMsg else OperitApp.appContext.getString(R.string.str_414), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1146,7 +1146,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
 
     // ---- 查看器背景色选项 ----
     val viewerBgChoices = remember { listOf(
-        "棋盘", "白色", "黑色", "浅灰", "绿色"
+        OperitApp.appContext.getString(R.string.str_329), OperitApp.appContext.getString(R.string.str_375), OperitApp.appContext.getString(R.string.str_457), OperitApp.appContext.getString(R.string.str_362), OperitApp.appContext.getString(R.string.str_387)
     ) }
     var viewerBgColor by remember { mutableStateOf(Prefs.viewerBgColor) }
 
@@ -1155,14 +1155,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            Toast.makeText(context, "通知权限已开启", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_442), Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "未授予通知权限，抠图完成将不提醒", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_306), Toast.LENGTH_LONG).show()
         }
     }
 
     // ★ QNN / 内置 CPU 模型自动加载：仅做【本地资产部署】（assets 拷贝），绝不在启动/选中时联网下载。
-    //   - QNN：ensureQnnContext 只从 assets 拷贝 onnx+bin；bin 未内置/缺失时不下载，置为"未就绪"，
+    //   - QNN：ensureQnnContext 只从 assets 拷贝 onnx+bin；bin 未内置/缺失时不下载，置为未就绪，
     //     需要用户手动点「部署/重新部署」按钮（startDownload → ensureQnnContextDual）才会联网下载。
     //   - CPU：ensureCpuModelFromAssets 从 assets 拷贝内置模型，离线就位。
     //   ★ 全部放 IO 线程：ensure* 会拷贝数十~百MB资产到模型目录，主线程做会卡死模型页。
@@ -1174,7 +1174,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 else ModelManager.ensureCpuModelFromAssets(context, selBm.id)
             }
             modelReady = deployed && ModelManager.isModelDownloaded()
-            statusText = if (modelReady) "模型已就绪，选择图片开始抠图"
+            statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341)
                 else if (selBm.isQnn) "${selBm.name} 未就绪（bin 未内置，可点「重新部署」联网下载）"
                 else "${selBm.name} 内置模型就位失败"
         }
@@ -1192,7 +1192,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 }
             }
             if (bmps.isEmpty()) {
-                Toast.makeText(context, if (origin == "share") "导入分享图片失败" else "没有可用的图片", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, if (origin == "share") OperitApp.appContext.getString(R.string.str_183) else OperitApp.appContext.getString(R.string.str_360), Toast.LENGTH_LONG).show()
                 return@launch
             }
             originalBitmap = bmps.first()
@@ -1211,16 +1211,16 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 "已导入 ${bmps.size} 张图片，点击立即抠图批量处理"
             else if (origin == "share")
                 if (isSmall) "已导入小图分享（${smallSide}px），可先查看并超分提升画质，点击抠图"
-                else "已导入分享图片，点击抠图开始处理"
+                else OperitApp.appContext.getString(R.string.str_216)
             else
                 if (isSmall) "已选择小图（${smallSide}px），可先查看并超分提升画质，点击抠图"
-                else "已选择图片，点击立即抠图"
+                else OperitApp.appContext.getString(R.string.str_236)
             Toast.makeText(
                 context,
                 if (bmps.size > 1) "已导入 ${bmps.size} 张图片"
                 else if (isSmall) "小图已导入（${smallSide}px），建议先超分提升画质"
-                else if (origin == "share") "已导入分享图片"
-                else "已选择图片",
+                else if (origin == "share") OperitApp.appContext.getString(R.string.str_215)
+                else OperitApp.appContext.getString(R.string.str_235),
                 Toast.LENGTH_LONG
             ).show()
             // ★ 接受分享后自动抠图：系统分享导入且开关开启 → 导入完成后自增计数，由下方 LaunchedEffect 触发 runRmbg()
@@ -1248,7 +1248,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             aiModelZipReady = true
         }
         // ★ 启动自动补全部署：扫描 ai_models/ 下未部署的 AI 重绘 zip，
-        //   逐个自动解压部署（不切换当前活动模型），让"已部署模型"列表一次性显示全部模型。
+        //   逐个自动解压部署（不切换当前活动模型），让已部署模型列表一次性显示全部模型。
         //   （部署成功自动删 zip 源包；本机已有 AnythingV5/MeinaMix 两个包时，第二个也能自动入列）
         scope.launch {
             val pendingZips = withContext(Dispatchers.IO) {
@@ -1370,7 +1370,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             context.contentResolver.openOutputStream(uri)?.use { os ->
                 bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
             }
-            Toast.makeText(context, "已保存", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_198), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
@@ -1386,7 +1386,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             context.contentResolver.openOutputStream(uri)?.use { os ->
                 bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
             }
-            Toast.makeText(context, "已另存为", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_208), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(context, "另存失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
@@ -1435,13 +1435,13 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-IMPORT", "导入失败", e)
+            android.util.Log.e("RMBG-IMPORT", OperitApp.appContext.getString(R.string.str_184), e)
             null
         }
         if (id == null) {
-            Toast.makeText(context, "导入失败，请确认是有效的 .onnx 模型", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.onnx_6), Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "本地模型已导入并选中", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_315), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1461,7 +1461,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         val baseName = displayName.removeSuffix(".zip").removeSuffix(".ZIP")
             .removeSuffix(".onnx").removeSuffix(".ONNX").ifBlank { "model" }
         // ★ 整个 zip 导入（复制 554MB + 解压 1GB+）放 IO 线程，避免主线程 ANR/卡死
-        Toast.makeText(context, "正在导入 zip 模型（大文件需数秒~数十秒）...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, OperitApp.appContext.getString(R.string.zip_10), Toast.LENGTH_SHORT).show()
         scope.launch {
             val imported = withContext(Dispatchers.IO) {
                 try {
@@ -1473,13 +1473,13 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-IMPORT", "zip 导入失败", e)
+                    android.util.Log.e("RMBG-IMPORT", OperitApp.appContext.getString(R.string.zip_4), e)
                     null
                 }
             }
             val id = imported
             if (id == null) {
-                Toast.makeText(context, "zip 导入失败，请确认包含 .onnx 与配套 .bin", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.zip_5), Toast.LENGTH_SHORT).show()
             } else {
                 localModelsVersion++ // ★ 触发本地模型列表刷新
                 selectedBuiltinId = id
@@ -1491,7 +1491,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     val validation = withContext(Dispatchers.IO) {
                         val file = File(ModelManager.modelDir(), lm.fileName)
                         if (!file.exists() || file.length() == 0L) {
-                            "❌ 模型文件无效或为空"
+                            OperitApp.appContext.getString(R.string.str_104)
                         } else {
                             val compat = runCatching { ModelManager.probeLocalModelCompat(lm, deep = true) }
                                 .getOrElse { ModelManager.ModelCompatibility(ModelManager.AccelSupport.CPU_ONLY, "", "", "") }
@@ -1502,14 +1502,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                                 if (binOk) {
                                     "✅ 可用（QNN HTP DSP）· ${compat.desc}"
                                 } else {
-                                    "⚠️ 已识别为 QNN 模型，但配套 .bin 缺失，将回退 CPU"
+                                    OperitApp.appContext.getString(R.string.qnn_19)
                                 }
                             } else {
                                 "可用 · ${compat.qnnLabel} · ${compat.nnapiLabel} · ${compat.desc}"
                             }
                         }
                     }
-                    val qnnOk = validation.startsWith("✅ 可用（QNN")
+                    val qnnOk = validation.startsWith(OperitApp.appContext.getString(R.string.qnn_21))
                     enableQnn = qnnOk
                     Prefs.enableQnn = qnnOk
                     try { engine?.close() } catch (_: Exception) {}
@@ -1517,7 +1517,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     modelReady = ModelManager.isModelDownloaded()
                     statusText = "已导入模型: $baseName\n$validation"
                 }
-                Toast.makeText(context, "zip 模型已导入并选中", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.zip_6), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1529,7 +1529,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
-        Toast.makeText(context, "正在导入 SAM 模型包（约 370MB，需数秒~数十秒）...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, OperitApp.appContext.getString(R.string.sam_17), Toast.LENGTH_SHORT).show()
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 try {
@@ -1541,13 +1541,13 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         r
                     } ?: false
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-SAM", "SAM zip 导入失败", e)
+                    android.util.Log.e("RMBG-SAM", OperitApp.appContext.getString(R.string.sam_2), e)
                     false
                 }
             }
             samReadyVersion++
             if (ok) {
-                Toast.makeText(context, "SAM 模型已就绪，可开始智能选区", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.sam_10), Toast.LENGTH_LONG).show()
                 // 就绪后自动打开编辑页（含「选区」tab，若有当前查看图）
                 val src = viewerBitmap ?: viewerOriginBitmap ?: originalBitmap
                 if (src != null && !src.isRecycled) {
@@ -1558,7 +1558,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     showOriginalViewer = false
                 }
             } else {
-                Toast.makeText(context, "SAM 模型导入失败，请确认是含 encoder+decoder 的模型包 zip", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.sam_8), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1577,7 +1577,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 if (c.moveToFirst()) c.getString(0) else "super_res.zip"
             } ?: "super_res.zip"
         } catch (_: Exception) { "super_res.zip" }
-        Toast.makeText(context, "正在导入超分模型（onnx+bin，大文件需数秒~数十秒）...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, OperitApp.appContext.getString(R.string.onnx_9), Toast.LENGTH_SHORT).show()
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
@@ -1599,7 +1599,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-IMPORT", "超分模型导入失败", e)
+                    android.util.Log.e("RMBG-IMPORT", OperitApp.appContext.getString(R.string.str_417), e)
                     null
                 }
             }
@@ -1608,7 +1608,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 superResVersion++ // ★ 触发超分卡片选中态+状态行刷新
                 Toast.makeText(context, "超分模型已导入（${File(result).name}）", Toast.LENGTH_LONG).show()
             } else {
-                Toast.makeText(context, "超分模型导入失败：请选择包含 onnx(+bin) 的 zip 或单个 onnx", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, OperitApp.appContext.getString(R.string.onnx_11), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1659,7 +1659,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                 val zipKind = withContext(Dispatchers.IO) { probeZipKind(copied) }
                 if (zipKind == ZIP_AI_REDRAW) {
                     // ★ 导入即部署：复制完成立即解压部署（约 1GB，1~3 分钟），
-                    //   部署成功后 zip 自动删除、目录入"已部署模型"列表，无需等查看器
+                    //   部署成功后 zip 自动删除、目录入已部署模型列表，无需等查看器
                     aiEngineStatus = "正在自动部署 AI 重绘模型（约 1GB，请稍候）..."
                     aiEngineBusy = true
                     val deployed = AiRedrawEngine.deployModel(context, copied, activate = true)
@@ -1711,7 +1711,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         )
                     } ?: false
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-BACKUP", "导出失败", e)
+                    android.util.Log.e("RMBG-BACKUP", OperitApp.appContext.getString(R.string.str_193), e)
                     false
                 }
             }
@@ -1740,7 +1740,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         BackupManager.importHistoryAndPrefs(context, ZipInputStream(input))
                     } ?: false
                 } catch (e: Exception) {
-                    android.util.Log.e("RMBG-BACKUP", "导入失败", e)
+                    android.util.Log.e("RMBG-BACKUP", OperitApp.appContext.getString(R.string.str_184), e)
                     false
                 }
             }
@@ -1864,7 +1864,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             isDownloading = false
                             DownloadService.stop(context)
                             Notifications.cancelDownloadNotification(context)
-                            Notifications.notifyDownloadDone(context, "${selBm.name} 已下载", "点击开始抠图")
+                            Notifications.notifyDownloadDone(context, "${selBm.name} 已下载", OperitApp.appContext.getString(R.string.str_367))
                         }
                         override fun onError(e: Exception) {
                             statusText = "下载错误：${e.message ?: e.javaClass.simpleName}"
@@ -1883,9 +1883,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     statusText = "${selBm.name} 已就绪，选择图片开始抠图"
                     Toast.makeText(context, "${selBm.name} 部署完成（${selBm.sizeBytes / 1024 / 1024}MB）", Toast.LENGTH_SHORT).show()
                 } else {
-                    statusText = if (ModelManager.isCancelRequested()) "下载已取消"
+                    statusText = if (ModelManager.isCancelRequested()) OperitApp.appContext.getString(R.string.str_112)
                         else "${selBm.name} 部署失败（详见日志或设置页诊断）"
-                    Toast.makeText(context, if (ModelManager.isCancelRequested()) "下载已取消" else "${selBm.name} 部署失败，请查看状态文字", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, if (ModelManager.isCancelRequested()) OperitApp.appContext.getString(R.string.str_112) else "${selBm.name} 部署失败，请查看状态文字", Toast.LENGTH_SHORT).show()
                 }
             }
             return
@@ -1947,8 +1947,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             isDownloading = false
                             statusText = "模型下载完成！选择图片开始抠图"
                             Notifications.cancelDownloadNotification(context)
-                            Notifications.notifyDownloadDone(context, "${selBmForDl?.name ?: "模型"}已下载", "点击开始抠图")
-                            Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
+                            Notifications.notifyDownloadDone(context, "${selBmForDl?.name ?: "模型"}已下载", OperitApp.appContext.getString(R.string.str_367))
+                            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_340), Toast.LENGTH_SHORT).show()
                         }
                         override fun onError(e: Exception) {
                             downloadingJob = null
@@ -1956,9 +1956,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             activeMirrorName = null
                             Notifications.cancelDownloadNotification(context)
                             DownloadService.stop(context)
-                            statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
+                            statusText = if (ModelManager.isCancelRequested()) OperitApp.appContext.getString(R.string.str_112) else "下载失败: ${e.message}"
                             if (ModelManager.isCancelRequested())
-                                Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_112), Toast.LENGTH_SHORT).show()
                             else
                                 Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
@@ -1973,7 +1973,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             downloadSpeed = speedBps
                             downloadBytes = bytesDownloaded
                             downloadTotal = totalBytes
-                            statusText = "下载中..."
+                            statusText = OperitApp.appContext.getString(R.string.str_110)
                             // ★ 系统通知栏：进度更新
                             Notifications.notifyDownloadProgress(context, "正在下载 ${selBmForDl?.name ?: "模型"}…", bytesDownloaded, totalBytes, speedBps)
                             DownloadService.kick(context)
@@ -1993,8 +1993,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             isDownloading = false
                             statusText = "模型下载完成！选择图片开始抠图"
                             Notifications.cancelDownloadNotification(context)
-                            Notifications.notifyDownloadDone(context, "${selBmForDl?.name ?: "模型"}已下载", "点击开始抠图")
-                            Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
+                            Notifications.notifyDownloadDone(context, "${selBmForDl?.name ?: "模型"}已下载", OperitApp.appContext.getString(R.string.str_367))
+                            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_340), Toast.LENGTH_SHORT).show()
                         }
                         override fun onError(e: Exception) {
                             downloadingJob = null
@@ -2002,9 +2002,9 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             activeMirrorName = null
                             Notifications.cancelDownloadNotification(context)
                             DownloadService.stop(context)
-                            statusText = if (ModelManager.isCancelRequested()) "下载已取消" else "下载失败: ${e.message}"
+                            statusText = if (ModelManager.isCancelRequested()) OperitApp.appContext.getString(R.string.str_112) else "下载失败: ${e.message}"
                             if (ModelManager.isCancelRequested())
-                                Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_112), Toast.LENGTH_SHORT).show()
                             else
                                 Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
@@ -2024,8 +2024,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         isDownloading = false
         // ★ 取消下载 → 停止下载前台服务
         DownloadService.stop(context)
-        statusText = "下载已取消"
-        Toast.makeText(context, "下载已取消", Toast.LENGTH_SHORT).show()
+        statusText = OperitApp.appContext.getString(R.string.str_112)
+        Toast.makeText(context, OperitApp.appContext.getString(R.string.str_112), Toast.LENGTH_SHORT).show()
     }
 
     // ---- 从自定义直链下载模型（模型配置·下载链接入口）----
@@ -2089,7 +2089,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     when (zipKind) {
                         ZIP_AI_REDRAW -> {
                             // ★ 下载即部署：下载完成立即自动解压部署激活（约 1GB，1~3 分钟），
-                            //   部署成功后 zip 自动删除、目录入"已部署模型"列表，无需再等查看器
+                            //   部署成功后 zip 自动删除、目录入已部署模型列表，无需再等查看器
                             aiEngineStatus = "正在自动部署 AI 重绘模型（约 1GB，请稍候）..."
                             aiEngineBusy = true
                             val deployed = AiRedrawEngine.deployModel(context, destFile, activate = true)
@@ -2164,7 +2164,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             downloadSpeed = speedBps
                             downloadBytes = bytesDownloaded
                             downloadTotal = totalBytes
-                            statusText = "下载中..."
+                            statusText = OperitApp.appContext.getString(R.string.str_110)
                             // ★ 系统通知栏：进度更新
                             Notifications.notifyDownloadProgress(context, "正在下载抠图模型…", bytesDownloaded, totalBytes, speedBps)
                         }
@@ -2187,8 +2187,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             Prefs.selectedModelId = ModelManager.CUSTOM_MODEL_ID
                             ModelManager.selectedMirrorIndex = selectedMirrorIndex
                             statusText = "自定义模型下载完成！选择图片开始抠图"
-                            Notifications.notifyDownloadDone(context, "抠图模型已下载", "点击开始抠图")
-                            Toast.makeText(context, "模型已就绪", Toast.LENGTH_SHORT).show()
+                            Notifications.notifyDownloadDone(context, "抠图模型已下载", OperitApp.appContext.getString(R.string.str_367))
+                            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_340), Toast.LENGTH_SHORT).show()
                         }
                         override fun onError(e: Exception) {
                             isDownloading = false
@@ -2335,7 +2335,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                                     // ★ 相册防重复：每张原图仅【首次】自动保存到相册（后续分支不重复存相册，
                                     //   避免相册堆积大量同源图）；历史记录本身每次照常写入。
                                     // ★ 用 saveToRmbgFolderNamed 拿相册文件名，供 markSavedToAlbum 记录到 meta，
-                                    //   保证查看器"删除图片"能精确定位（此前用返回 Boolean 的 saveToRmbgFolder
+                                    //   保证查看器删除图片能精确定位（此前用返回 Boolean 的 saveToRmbgFolder
                                     //   丢文件名 → album_file 空 → 删除时"未记录文件名"）。
                                     val albumFileName = if (autoSaveResult) {
                                         val groupSaved = HistoryManager.getHistory(context)
@@ -2525,7 +2525,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = if (modelReady) "模型已就绪" else "准备就绪",
+                            text = if (modelReady) OperitApp.appContext.getString(R.string.str_340) else OperitApp.appContext.getString(R.string.str_134),
                             style = MaterialTheme.typography.titleLarge,
                             color = Color(0xFF1F2933),
                             fontWeight = FontWeight.Bold
@@ -2538,7 +2538,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     )
                     if (modelReady) {
                         Text(
-                            text = "本地 ONNX 推理 · 完全离线",
+                            text = OperitApp.appContext.getString(R.string.onnx_8),
                             style = MaterialTheme.typography.labelMedium,
                             color = Color(0xFF2E7D32)
                         )
@@ -2565,7 +2565,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                             Spacer(Modifier.width(14.dp))
                             Column {
                                 Text(
-                                    "下载中...",
+                                    OperitApp.appContext.getString(R.string.str_110),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -2611,7 +2611,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             // ===== 模型操作按钮 =====
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (isDownloading) {
-                    // ★ 下载进行中 → 显示"取消下载"
+                    // ★ 下载进行中 → 显示取消下载
                     Button(
                         onClick = { cancelDownload() },
                         colors = ButtonDefaults.buttonColors(
@@ -2625,7 +2625,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     ) {
                         Icon(Icons.Filled.Close, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("取消下载", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_163), fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
                 } else if (!modelReady) {
                     Button(
@@ -2639,12 +2639,12 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                         Icon(Icons.Filled.Download, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            if (isDownloading) "下载中..."
+                            if (isDownloading) OperitApp.appContext.getString(R.string.str_110)
                             else {
                                 val curBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
                                 if (curBm != null && curBm.isQnn) "部署 QNN EPContext (${curBm.sizeBytes / 1024 / 1024}MB)"
                                 else if (curBm != null) "下载模型 (${curBm.sizeBytes / 1024 / 1024}MB)"
-                                else "下载模型"
+                                else OperitApp.appContext.getString(R.string.str_113)
                             },
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold
@@ -2660,14 +2660,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("重新部署", fontSize = 15.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_447), fontSize = 15.sp)
                     }
                 } else {
                     OutlinedButton(
                         onClick = {
                             ModelManager.deleteModel()
                             modelReady = false
-                            statusText = "模型已删除，需重新下载"
+                            statusText = OperitApp.appContext.getString(R.string.str_339)
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -2676,7 +2676,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     ) {
                         Icon(Icons.Filled.Delete, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("删除模型", fontSize = 15.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_149), fontSize = 15.sp)
                     }
                 }
             }
@@ -2689,7 +2689,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             //   ★★ 关键修复：这里【不做 remember 缓存】，每次切换到模型页都实时读取磁盘状态——
             //      内置模型仅 6~7 个，isBuiltinModelDownloaded 的 File.exists/length 开销微秒级，不会卡。
             //      此前用 remember(builtinModelsVersion, cpuDeploying) 缓存会在首次组合时把当时状态锁死，
-            //      若部署完成时序晚于首次计算，文件已就位但缓存不重算 → 打开模型页仍显示"未下载"，
+            //      若部署完成时序晚于首次计算，文件已就位但缓存不重算 → 打开模型页仍显示未下载，
             //      必须点击触发 key 变化才刷新——这正是用户反复反馈"要点击一次"的根因。
             //      （会真正卡死的是 ensureCpuModelFromAssets 在主线程拷贝176MB，那已移到 IO 线程，与本缓存无关）
             val builtinReadyCache = ModelManager.builtinModels.associate { it.id to ModelManager.isBuiltinModelDownloaded(it) }
@@ -2713,9 +2713,9 @@ Card(
                     ) {
                         Icon(Icons.Filled.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("内置模型", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(OperitApp.appContext.getString(R.string.str_129), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         TextButton(onClick = { showBuiltinPicker = !showBuiltinPicker }) {
-                            Text(if (showBuiltinPicker) "收起" else "选择")
+                            Text(if (showBuiltinPicker) OperitApp.appContext.getString(R.string.str_284) else OperitApp.appContext.getString(R.string.str_436))
                         }
                     }
                     // ---- 当前选中模型展示（收起时也能看到选了哪个模型）----
@@ -2738,7 +2738,7 @@ Card(
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                curBm?.name ?: curLocal?.displayName ?: "自定义模型",
+                                curBm?.name ?: curLocal?.displayName ?: OperitApp.appContext.getString(R.string.str_394),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold
                                 // ★ 完整显示模型名：不限制行数（本地模型长文件名也能看全）
@@ -2757,15 +2757,15 @@ Card(
                         }
                         Spacer(Modifier.width(4.dp))
                         if (modelReady) {
-                            Text("✅ 就绪", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                            Text(OperitApp.appContext.getString(R.string.str_091), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                         } else {
-                            Text("未就绪", style = MaterialTheme.typography.labelSmall, color = Color(0xFFB71C1C))
+                            Text(OperitApp.appContext.getString(R.string.str_303), style = MaterialTheme.typography.labelSmall, color = Color(0xFFB71C1C))
                         }
                     }
                     if (showBuiltinPicker) {
                         // ================= CPU 模型组 =================
                         Text(
-                            "🧠 CPU 模型（普通 ONNX · CPU/NNAPI 加速）",
+                            OperitApp.appContext.getString(R.string.cpu_10),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2797,7 +2797,7 @@ Card(
                                             engine = null
                                             // 立即检查该模型是否已下载
                                             modelReady = ModelManager.isModelDownloaded()
-                                            statusText = if (modelReady) "模型已就绪，选择图片开始抠图" else if (bm.isQnn) "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）" else "需要下载模型（约${bm.sizeBytes / 1024 / 1024}MB）"
+                                            statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341) else if (bm.isQnn) "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）" else "需要下载模型（约${bm.sizeBytes / 1024 / 1024}MB）"
                                         }
                                     )
                                     .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -2815,7 +2815,7 @@ Card(
                                     try { engine?.close() } catch (_: Exception) {}
                                     engine = null
                                     modelReady = ModelManager.isModelDownloaded()
-                                    statusText = if (modelReady) "模型已就绪，选择图片开始抠图" else if (bm.isQnn) "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）" else "需要下载模型（约${bm.sizeBytes / 1024 / 1024}MB）"
+                                    statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341) else if (bm.isQnn) "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）" else "需要下载模型（约${bm.sizeBytes / 1024 / 1024}MB）"
                                 })
                                 Column(
                                     Modifier
@@ -2840,19 +2840,19 @@ Card(
                                 // 状态徽标 + 下载/删除操作
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (cpuDeploying && !bmReady) {
-                                        // ★ 内置 CPU 模型正在从 assets 释放（176MB 拷贝中）→ 转圈动画，替代"未下载"
+                                        // ★ 内置 CPU 模型正在从 assets 释放（176MB 拷贝中）→ 转圈动画，替代未下载
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             CircularProgressIndicator(
                                                 modifier = Modifier.size(14.dp),
                                                 strokeWidth = 2.dp
                                             )
                                             Spacer(Modifier.width(4.dp))
-                                            Text("部署中", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                                            Text(OperitApp.appContext.getString(R.string.str_444), style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
                                         }
                                     } else if (bmReady) {
-                                        Text("✅ 已下载", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                        Text(OperitApp.appContext.getString(R.string.str_092), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                                     } else {
-                                        Text("未下载", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                        Text(OperitApp.appContext.getString(R.string.str_298), style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
                                     }
                                     if (bmReady) {
                                         // 已下载 → 删除按钮
@@ -2862,7 +2862,7 @@ Card(
                                                 builtinModelsVersion++ // ★ 刷新内置模型下载状态
                                                 if (selectedBuiltinId == bm.id) {
                                                     modelReady = false
-                                                    statusText = "模型已删除，可重新下载"
+                                                    statusText = OperitApp.appContext.getString(R.string.str_337)
                                                     try { engine?.close() } catch (_: Exception) {}
                                                     engine = null
                                                 } else {
@@ -2908,7 +2908,7 @@ Card(
                                                                 override fun onMirrorError(mirrorName: String, error: String) { activeMirrorName = null }
                                                                 override fun onDone(file: File) {
                                                                     Notifications.cancelDownloadNotification(context)
-                                                                    Notifications.notifyDownloadDone(context, "${bm.name}已下载", "点击开始抠图")
+                                                                    Notifications.notifyDownloadDone(context, "${bm.name}已下载", OperitApp.appContext.getString(R.string.str_367))
                                                                 }
                                                                 override fun onError(e: Exception) {
                                                                     Notifications.cancelDownloadNotification(context)
@@ -2937,7 +2937,7 @@ Card(
                                                                 }
                                                                 override fun onDone(file: File) {
                                                                     Notifications.cancelDownloadNotification(context)
-                                                                    Notifications.notifyDownloadDone(context, "${bm.name}已下载", "点击开始抠图")
+                                                                    Notifications.notifyDownloadDone(context, "${bm.name}已下载", OperitApp.appContext.getString(R.string.str_367))
                                                                 }
                                                                 override fun onError(e: Exception) {
                                                                     Notifications.cancelDownloadNotification(context)
@@ -2966,7 +2966,7 @@ Card(
                         }
                         // ================= QNN 模型组 =================
                         Text(
-                            "⚡ QNN 模型（骁龙 DSP · HTP 离线编译）",
+                            OperitApp.appContext.getString(R.string.qnn_20),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -2990,7 +2990,7 @@ Card(
                                             if (isProcessing) return@selectable
                                             // ★ 超分模型条目不参与抠图选中（独立 Prefs 管理）
                                             if (bm.id == "qnn_realesrgan") {
-                                                Toast.makeText(context, "超分模型：点右侧按钮下载/删除，不参与抠图选择", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_424), Toast.LENGTH_SHORT).show()
                                                 return@selectable
                                             }
                                             selectedBuiltinId = bm.id
@@ -3003,7 +3003,7 @@ Card(
                                             try { engine?.close() } catch (_: Exception) {}
                                             engine = null
                                             modelReady = ModelManager.isModelDownloaded()
-                                            statusText = if (modelReady) "模型已就绪，选择图片开始抠图" else "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）"
+                                            statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341) else "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）"
                                         }
                                     )
                                     .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -3013,7 +3013,7 @@ Card(
                                     if (isProcessing) return@RadioButton
                                     // ★ 超分模型条目不参与抠图选中
                                     if (bm.id == "qnn_realesrgan") {
-                                        Toast.makeText(context, "超分模型：点右侧按钮下载/删除，不参与抠图选择", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.str_424), Toast.LENGTH_SHORT).show()
                                         return@RadioButton
                                     }
                                     selectedBuiltinId = bm.id
@@ -3026,7 +3026,7 @@ Card(
                                     try { engine?.close() } catch (_: Exception) {}
                                     engine = null
                                     modelReady = ModelManager.isModelDownloaded()
-                                    statusText = if (modelReady) "模型已就绪，选择图片开始抠图" else "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）"
+                                    statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341) else "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）"
                                 })
                                 Column(
                                     Modifier
@@ -3050,9 +3050,9 @@ Card(
                                 Spacer(Modifier.width(4.dp))
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (bmReady) {
-                                        Text(if (bm.id == "qnn_realesrgan") "✅ 已就绪" else "✅ 已部署", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                        Text(if (bm.id == "qnn_realesrgan") OperitApp.appContext.getString(R.string.str_093) else OperitApp.appContext.getString(R.string.str_094), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                                     } else {
-                                        Text(if (bm.id == "qnn_realesrgan") "未下载" else "未部署", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                        Text(if (bm.id == "qnn_realesrgan") OperitApp.appContext.getString(R.string.str_298) else OperitApp.appContext.getString(R.string.str_311), style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
                                     }
                                     if (bmReady) {
                                         // 已部署 → 删除按钮（释放模型目录空间；超分同时清 Prefs）
@@ -3062,11 +3062,11 @@ Card(
                                                 builtinModelsVersion++ // ★ 刷新内置模型下载状态
                                                 if (bm.id == "qnn_realesrgan") {
                                                     Prefs.superResModelPath = ""
-                                                    statusText = "超分模型已删除，超分回退内置 CPU 模型"
-                                                    Toast.makeText(context, "超分模型已删除", Toast.LENGTH_SHORT).show()
+                                                    statusText = OperitApp.appContext.getString(R.string.cpu_9)
+                                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.str_419), Toast.LENGTH_SHORT).show()
                                                 } else if (selectedBuiltinId == bm.id) {
                                                     modelReady = false
-                                                    statusText = "模型已删除，可重新部署"
+                                                    statusText = OperitApp.appContext.getString(R.string.str_338)
                                                     try { engine?.close() } catch (_: Exception) {}
                                                     engine = null
                                                 } else {
@@ -3085,7 +3085,7 @@ Card(
                                                     // ★ 超分模型：云端下载（QNN 匹配 → HF zip；否则回退 CPU 内置资产）
                                                     scope.launch {
                                                         downloadingId = bm.id
-                                                        statusText = "正在下载超分模型（QNN HTP / CPU 自适应）..."
+                                                        statusText = OperitApp.appContext.getString(R.string.qnn_35)
                                                         val path = ModelManager.downloadSuperResModel(
                                                             context = context,
                                                             listener = object : ModelManager.ProgressListener {
@@ -3102,14 +3102,14 @@ Card(
                                                         if (path != null && java.io.File(path).exists()) {
                                                             Prefs.superResModelPath = path
                                                             builtinModelsVersion++ // ★ 刷新内置模型下载状态
-                                                            statusText = "✅ 超分模型已下载（QNN HTP 加速），超分时自动启用"
-                                                            Toast.makeText(context, "超分模型已就绪（QNN HTP）", Toast.LENGTH_SHORT).show()
+                                                            statusText = OperitApp.appContext.getString(R.string.qnn_23)
+                                                            Toast.makeText(context, OperitApp.appContext.getString(R.string.qnn_36), Toast.LENGTH_SHORT).show()
                                                         } else {
                                                             // 回退 CPU：内置 assets 已就绪，免下载
                                                             Prefs.superResModelPath = ""
                                                             builtinModelsVersion++
-                                                            statusText = "当前设备自动使用内置 CPU 超分（免下载），超分时自动启用"
-                                                            Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                                            statusText = OperitApp.appContext.getString(R.string.cpu_7)
+                                                            Toast.makeText(context, OperitApp.appContext.getString(R.string.cpu_4), Toast.LENGTH_SHORT).show()
                                                         }
                                                     }
                                                     return@IconButton
@@ -3118,7 +3118,7 @@ Card(
                                                     // ★ Anime-Seg：按设备 SoC 自动匹配对应 NPU 编译产物（sm8350~8850 → HF zip；sm8550 → 内置 v73）
                                                     scope.launch {
                                                         downloadingId = bm.id
-                                                        statusText = "正在部署 Anime-Seg（按设备 NPU 自动匹配）..."
+                                                        statusText = OperitApp.appContext.getString(R.string.npu_2)
                                                         val ok = ModelManager.downloadAnimeSeg(
                                                             context = context,
                                                             listener = object : ModelManager.ProgressListener {
@@ -3191,10 +3191,10 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.ZoomIn, contentDescription = null, tint = Color(0xFFFF8F00))
                         Spacer(Modifier.width(8.dp))
-                        Text("超分模型（4x 放大）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(OperitApp.appContext.getString(R.string.str_423), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     }
                     Text(
-                        "AI 放大 4 倍：QNN（骁龙 DSP 加速）或 CPU（内置通用模型）二选一。",
+                        OperitApp.appContext.getString(R.string.ai_3),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3226,7 +3226,7 @@ Card(
                                     if (!srQnnReady) {
                                         scope.launch {
                                             downloadingId = "qnn_realesrgan"
-                                            statusText = "正在下载超分模型（QNN HTP / CPU 自适应）..."
+                                            statusText = OperitApp.appContext.getString(R.string.qnn_35)
                                             val path = ModelManager.downloadSuperResModel(
                                                 context = context,
                                                 listener = object : ModelManager.ProgressListener {
@@ -3243,14 +3243,14 @@ Card(
                                             if (path != null && java.io.File(path).exists()) {
                                                 com.rmbg.offline.Prefs.superResModelPath = path
                                                 builtinModelsVersion++
-                                                statusText = "✅ 超分模型已下载（QNN HTP 加速），超分时自动启用"
-                                                Toast.makeText(context, "超分模型已就绪（QNN HTP）", Toast.LENGTH_SHORT).show()
+                                                statusText = OperitApp.appContext.getString(R.string.qnn_23)
+                                                Toast.makeText(context, OperitApp.appContext.getString(R.string.qnn_36), Toast.LENGTH_SHORT).show()
                                             } else {
                                                 // 回退 CPU：内置 assets 已就绪
                                                 com.rmbg.offline.Prefs.superResModelPath = ""
                                                 builtinModelsVersion++
-                                                statusText = "当前设备自动使用内置 CPU 超分（免下载）"
-                                                Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                                statusText = OperitApp.appContext.getString(R.string.cpu_6)
+                                                Toast.makeText(context, OperitApp.appContext.getString(R.string.cpu_4), Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                     } else {
@@ -3262,8 +3262,8 @@ Card(
                                             }
                                         }
                                         builtinModelsVersion++
-                                        statusText = "已启用 QNN 超分（骁龙 DSP 加速）"
-                                        Toast.makeText(context, "已启用 QNN 超分", Toast.LENGTH_SHORT).show()
+                                        statusText = OperitApp.appContext.getString(R.string.qnn_32)
+                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.qnn_31), Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             )
@@ -3274,14 +3274,14 @@ Card(
                                     .fillMaxWidth()
                             ) {
                                 Text(
-                                    "QNN 超分（骁龙 DSP 加速）",
+                                    OperitApp.appContext.getString(R.string.qnn_13),
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = if (srQnnSelected) FontWeight.Bold else FontWeight.Normal,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    "Real-ESRGAN · SM8350~SM8850 多型号 · 28-30MB（512→2048）",
+                                    OperitApp.appContext.getString(R.string.str_055),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -3289,9 +3289,9 @@ Card(
                             Spacer(Modifier.width(4.dp))
                             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 if (srQnnReady) {
-                                    Text("✅ 已就绪", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                    Text(OperitApp.appContext.getString(R.string.str_093), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                                 } else {
-                                    Text("未下载", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                    Text(OperitApp.appContext.getString(R.string.str_298), style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
                                 }
                                 if (srQnnReady) {
                                     // 已就绪 → 删除按钮
@@ -3300,12 +3300,12 @@ Card(
                                             ModelManager.deleteBuiltinModel(srQnn)
                                             builtinModelsVersion++
                                             com.rmbg.offline.Prefs.superResModelPath = ""
-                                            statusText = "超分模型已删除，超分回退内置 CPU 模型"
-                                            Toast.makeText(context, "超分模型已删除", Toast.LENGTH_SHORT).show()
+                                            statusText = OperitApp.appContext.getString(R.string.cpu_9)
+                                            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_419), Toast.LENGTH_SHORT).show()
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
-                                        Icon(Icons.Filled.Delete, contentDescription = "删除 QNN 超分", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Filled.Delete, contentDescription = OperitApp.appContext.getString(R.string.qnn_28), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                                     }
                                 } else {
                                     // 未下载 → 下载按钮
@@ -3313,7 +3313,7 @@ Card(
                                         onClick = {
                                             scope.launch {
                                                 downloadingId = "qnn_realesrgan"
-                                                statusText = "正在下载超分模型（QNN HTP / CPU 自适应）..."
+                                                statusText = OperitApp.appContext.getString(R.string.qnn_35)
                                                 val path = ModelManager.downloadSuperResModel(
                                                     context = context,
                                                     listener = object : ModelManager.ProgressListener {
@@ -3330,13 +3330,13 @@ Card(
                                                 if (path != null && java.io.File(path).exists()) {
                                                     com.rmbg.offline.Prefs.superResModelPath = path
                                                     builtinModelsVersion++
-                                                    statusText = "✅ 超分模型已下载（QNN HTP 加速）"
-                                                    Toast.makeText(context, "超分模型已就绪（QNN HTP）", Toast.LENGTH_SHORT).show()
+                                                    statusText = OperitApp.appContext.getString(R.string.qnn_22)
+                                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.qnn_36), Toast.LENGTH_SHORT).show()
                                                 } else {
                                                     com.rmbg.offline.Prefs.superResModelPath = ""
                                                     builtinModelsVersion++
-                                                    statusText = "当前设备自动使用内置 CPU 超分（免下载）"
-                                                    Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                                    statusText = OperitApp.appContext.getString(R.string.cpu_6)
+                                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.cpu_4), Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         },
@@ -3345,7 +3345,7 @@ Card(
                                         if (srQnnDownloading) {
                                             CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                                         } else {
-                                            Icon(Icons.Filled.Download, contentDescription = "下载 QNN 超分", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                            Icon(Icons.Filled.Download, contentDescription = OperitApp.appContext.getString(R.string.qnn_26), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                         }
                                     }
                                 }
@@ -3367,8 +3367,8 @@ Card(
                                     if (isProcessing) return@selectable
                                     com.rmbg.offline.Prefs.superResModelPath = ""
                                     builtinModelsVersion++
-                                    statusText = "已选用 CPU 超分（内置通用模型，兼容所有设备）"
-                                    Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                                    statusText = OperitApp.appContext.getString(R.string.cpu_5)
+                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.cpu_4), Toast.LENGTH_SHORT).show()
                                 }
                             )
                             .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -3378,8 +3378,8 @@ Card(
                             if (isProcessing) return@RadioButton
                             com.rmbg.offline.Prefs.superResModelPath = ""
                             builtinModelsVersion++
-                            statusText = "已选用 CPU 超分（内置通用模型，兼容所有设备）"
-                            Toast.makeText(context, "已启用 CPU 超分（内置模型）", Toast.LENGTH_SHORT).show()
+                            statusText = OperitApp.appContext.getString(R.string.cpu_5)
+                            Toast.makeText(context, OperitApp.appContext.getString(R.string.cpu_4), Toast.LENGTH_SHORT).show()
                         })
                         Column(
                             Modifier
@@ -3388,21 +3388,21 @@ Card(
                                 .fillMaxWidth()
                         ) {
                             Text(
-                                "CPU 超分（内置通用模型）",
+                                OperitApp.appContext.getString(R.string.cpu_2),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = if (cpuSrSelected) FontWeight.Bold else FontWeight.Normal,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                "兼容所有设备 · 免下载 · 18MB 内置 Real-ESRGAN 4x",
+                                OperitApp.appContext.getString(R.string.str_127),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.width(4.dp))
                         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("✅ 内置就绪", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                            Text(OperitApp.appContext.getString(R.string.str_089), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                         }
                     }
 
@@ -3458,7 +3458,7 @@ Card(
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("导入本地 .onnx 模型")
+                        Text(OperitApp.appContext.getString(R.string.onnx_7))
                     }
                     OutlinedButton(
                         onClick = { importZipLauncher.launch("*/*") },
@@ -3609,7 +3609,7 @@ Card(
                         Spacer(Modifier.width(8.dp))
                         Text("模型状态诊断", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Text(
-                            if (showModelDiag) "收起 ▲" else "展开 ▼",
+                            if (showModelDiag) OperitApp.appContext.getString(R.string.str_285) else OperitApp.appContext.getString(R.string.str_197),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -3770,7 +3770,7 @@ Card(
                         Spacer(Modifier.width(8.dp))
                         Text("模型配置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         TextButton(onClick = { showModelConfig = !showModelConfig }) {
-                            Text(if (showModelConfig) "收起" else "展开")
+                            Text(if (showModelConfig) OperitApp.appContext.getString(R.string.str_284) else "展开")
                         }
                     }
                     if (showModelConfig) {
@@ -3797,7 +3797,7 @@ Card(
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 when {
-                                    isDownloading -> "下载中..."
+                                    isDownloading -> OperitApp.appContext.getString(R.string.str_110)
                                     aiRedrawDownloading -> "AI 重绘模型下载中..."
                                     else -> "从链接下载并应用"
                                 }
@@ -3883,7 +3883,7 @@ Card(
                         if (aiEngineStatus.isNotEmpty()) aiEngineStatus
                         else "选择 SD 模型包 zip（animemix / AnythingV5 / MeinaMix 等）。重绘时自动部署启动，用完后自动停止。",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (aiEngineStatus.contains("失败") || aiEngineStatus.contains("❌") || aiEngineStatus.contains("超时") || aiEngineStatus.contains("退出") || aiEngineStatus.contains("不存在") || aiEngineStatus.contains("缺失")) Color(0xFFC62828) else if (aiEngineStatus.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32)
+                        color = if (aiEngineStatus.contains("失败") || aiEngineStatus.contains("❌") || aiEngineStatus.contains("超时") || aiEngineStatus.contains(OperitApp.appContext.getString(R.string.str_429)) || aiEngineStatus.contains("不存在") || aiEngineStatus.contains("缺失")) Color(0xFFC62828) else if (aiEngineStatus.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32)
                     )
                     // 选包按钮（全宽，唯一手动操作）
                     OutlinedButton(
@@ -3900,8 +3900,8 @@ Card(
                                 if (AiRedrawEngine.modelZipFile?.exists() == true)
                                     "✅ 模型包已选（${AiRedrawEngine.modelZipFile?.let { formatSize(it.length()) } ?: ""}）"
                                 else if (cur.isNotEmpty()) "✅ 已部署：$cur"
-                                else "✅ 模型已就绪"
-                            } else "选择 SD 模型包 zip",
+                                else OperitApp.appContext.getString(R.string.str_096)
+                            } else OperitApp.appContext.getString(R.string.sd_4),
                             fontSize = 14.sp, maxLines = 1
                         )
                     }
@@ -3937,7 +3937,7 @@ Card(
                         } else {
                             Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("云端下载 animemix 模型（约 1.2GB）", fontSize = 14.sp)
+                            Text(OperitApp.appContext.getString(R.string.str_114), fontSize = 14.sp)
                         }
                     }
                     if (aiRedrawDownloading && aiRedrawDlTotal > 0) {
@@ -3959,7 +3959,7 @@ Card(
                     //   复用 Tab 1 顶部缓存，避免每次重组 listFiles 扫 1GB+ 目录卡顿
                     val deployedList = deployedModelCache
                     if (deployedList.isNotEmpty()) {
-                        Text("已部署模型", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF7B1FA2))
+                        Text(OperitApp.appContext.getString(R.string.str_239), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF7B1FA2))
                         val currentId = AiRedrawEngine.activeModelId.ifBlank { Prefs.aiRedrawModelId }
                         deployedList.forEach { id ->
                             val isCurrent = id == currentId
@@ -4011,7 +4011,7 @@ Card(
                                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
                                     )
                                     Text(
-                                        "SD1.5 · QNN 本地重绘 · 约 1GB",
+                                        OperitApp.appContext.getString(R.string.qnn_15),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -4019,9 +4019,9 @@ Card(
                                 Spacer(Modifier.width(4.dp))
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (isCurrent) {
-                                        Text("✅ 当前", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                                        Text(OperitApp.appContext.getString(R.string.str_095), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                                     } else {
-                                        Text("已部署", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                        Text(OperitApp.appContext.getString(R.string.str_238), style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
                                     }
                                     // ★ 删除该已部署模型（释放约 1GB 空间；删当前模型则清空状态）
                                     //   样式与抠图/超分模型删除一致：IconButton 红色垃圾桶
@@ -4038,7 +4038,7 @@ Card(
                                                     aiEngineStatus = "🗑 已删除模型: $id"
                                                     Toast.makeText(context, "已删除模型 $id", Toast.LENGTH_SHORT).show()
                                                 } else {
-                                                    Toast.makeText(context, "删除失败", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.str_146), Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         },
@@ -4077,16 +4077,16 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("后台保活", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_166), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("常驻通知保活", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.str_244), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                "前台服务+通知，防止模型加载后后台被系统回收",
+                                OperitApp.appContext.getString(R.string.str_150),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4098,10 +4098,10 @@ Card(
                                 Prefs.keepAlive = it
                                 if (it) {
                                     try { KeepAliveService.start(context) } catch (_: Exception) {}
-                                    Toast.makeText(context, "后台保活已开启", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.str_168), Toast.LENGTH_SHORT).show()
                                 } else {
                                     try { KeepAliveService.stop(context) } catch (_: Exception) {}
-                                    Toast.makeText(context, "后台保活已关闭", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, OperitApp.appContext.getString(R.string.str_167), Toast.LENGTH_SHORT).show()
                                 }
                             }
                         )
@@ -4121,7 +4121,7 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("历史记录", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_156), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.weight(1f))
                         // ★ 历史记录开关：关闭后不再自动记录新历史（已有历史保留、不清空）
                         Switch(
@@ -4131,7 +4131,7 @@ Card(
                                 Prefs.enableHistory = it
                                 Toast.makeText(
                                     context,
-                                    if (it) "已开启历史记录" else "已关闭历史记录（已有记录保留，不再新增）",
+                                    if (it) OperitApp.appContext.getString(R.string.str_220) else OperitApp.appContext.getString(R.string.str_202),
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -4139,8 +4139,8 @@ Card(
                     }
                     Text(
                         if (enableHistory)
-                            "抠图完成后自动把 原图→结果 存入历史"
-                        else "历史记录已关闭：不再自动新增记录，已有历史保留、不会清空",
+                            OperitApp.appContext.getString(R.string.str_270)
+                        else OperitApp.appContext.getString(R.string.str_158),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4148,21 +4148,21 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Save, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("自动保存到相册", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_393), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.weight(1f))
                         Switch(
                             checked = autoSaveResult,
                             onCheckedChange = {
                                 autoSaveResult = it
                                 Prefs.autoSaveResult = it
-                                Toast.makeText(context, if (it) "已开启自动保存到相册" else "已关闭自动保存到相册", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) OperitApp.appContext.getString(R.string.str_221) else OperitApp.appContext.getString(R.string.str_203), Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
                     Text(
                         if (autoSaveResult)
-                            "抠图完成后自动把结果保存到系统相册"
-                        else "关闭后不自动保存到相册；历史记录不受影响",
+                            OperitApp.appContext.getString(R.string.str_271)
+                        else OperitApp.appContext.getString(R.string.str_125),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4170,21 +4170,21 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("接受分享后自动抠图", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_281), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.weight(1f))
                         Switch(
                             checked = autoCutoutOnShare,
                             onCheckedChange = {
                                 autoCutoutOnShare = it
                                 Prefs.autoCutoutOnShare = it
-                                Toast.makeText(context, if (it) "已开启：分享导入后自动抠图" else "已关闭：分享导入后需手动抠图", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) OperitApp.appContext.getString(R.string.str_222) else OperitApp.appContext.getString(R.string.str_204), Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
                     Text(
                         if (autoCutoutOnShare)
-                            "从系统分享图片进来后自动开始抠图"
-                        else "关闭后分享导入图片需手动点击抠图",
+                            OperitApp.appContext.getString(R.string.str_116)
+                        else OperitApp.appContext.getString(R.string.str_126),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4203,7 +4203,7 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("通知权限", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_441), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -4211,13 +4211,13 @@ Card(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                if (Notifications.hasPermission(context)) "已授予通知权限" else "未授予通知权限",
+                                if (Notifications.hasPermission(context)) OperitApp.appContext.getString(R.string.str_227) else OperitApp.appContext.getString(R.string.str_305),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = if (Notifications.hasPermission(context)) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
                             )
                             Text(
-                                "抠图完成时通知提醒；保活通知也需要此权限",
+                                OperitApp.appContext.getString(R.string.str_272),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4226,7 +4226,7 @@ Card(
                             Button(onClick = {
                                 notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                             }) {
-                                Text("申请")
+                                Text(OperitApp.appContext.getString(R.string.str_373))
                             }
                         }
                     }
@@ -4245,7 +4245,7 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("ONNX 加速", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.onnx_4), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
                     // NNAPI 硬件加速开关
                     Row(
@@ -4253,9 +4253,9 @@ Card(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("NNAPI 硬件加速", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.nnapi_4), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                "调用 NPU/DSP 加速推理（不兼容时自动回退 CPU）",
+                                OperitApp.appContext.getString(R.string.npu_3),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4268,7 +4268,7 @@ Card(
                                 // 加速设置变更后需重建引擎
                                 engine?.close()
                                 engine = null
-                                Toast.makeText(context, if (it) "已启用 NNAPI，下次抠图生效" else "已关闭 NNAPI", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) OperitApp.appContext.getString(R.string.nnapi_9) else OperitApp.appContext.getString(R.string.nnapi_8), Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -4278,9 +4278,9 @@ Card(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("QNN 加速（骁龙 DSP）", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.qnn_11), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                "Qualcomm Hexagon HTP 硬件加速；需带 QNN EP 的 ORT + QNN SDK 库",
+                                OperitApp.appContext.getString(R.string.htp_2),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4292,7 +4292,7 @@ Card(
                                 Prefs.enableQnn = it
                                 engine?.close()
                                 engine = null
-                                Toast.makeText(context, if (it) "已启用 QNN，下次抠图生效" else "已关闭 QNN", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) OperitApp.appContext.getString(R.string.qnn_33) else OperitApp.appContext.getString(R.string.qnn_30), Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -4311,9 +4311,9 @@ Card(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("精细抠图（大图分块）· 实验性", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.str_383), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                "【实验性功能，默认关闭】>1024px 图片自动分块推理保留细节；分块拼接可能有接缝，内存低时建议关闭",
+                                OperitApp.appContext.getString(R.string.str_106),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4323,7 +4323,7 @@ Card(
                             onCheckedChange = {
                                 tileMode = it
                                 Prefs.tileMode = it
-                                Toast.makeText(context, if (it) "精细抠图已开启（大图自动分块）" else "精细抠图已关闭", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) OperitApp.appContext.getString(R.string.str_382) else OperitApp.appContext.getString(R.string.str_381), Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -4333,9 +4333,9 @@ Card(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("极速模式", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text(OperitApp.appContext.getString(R.string.str_319), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                "缩小分辨率快速抠图，速度优先；与精细抠图不冲突",
+                                OperitApp.appContext.getString(R.string.str_389),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4345,7 +4345,7 @@ Card(
                             onCheckedChange = {
                                 turboMode = it
                                 Prefs.turboMode = it
-                                Toast.makeText(context, if (it) "极速模式已开启（缩分辨率加速）" else "极速模式已关闭", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (it) OperitApp.appContext.getString(R.string.str_321) else OperitApp.appContext.getString(R.string.str_320), Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -4354,7 +4354,7 @@ Card(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("CPU 线程数", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(OperitApp.appContext.getString(R.string.cpu), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Text("$onnxThreads", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                     Slider(
@@ -4366,7 +4366,7 @@ Card(
                         steps = 6
                     )
                     Text(
-                        "线程越多推理越快，但内存占用更高；设备内存不足时建议降到 2",
+                        OperitApp.appContext.getString(R.string.str_384),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4377,7 +4377,7 @@ Card(
                         onClick = {
                             scope.launch {
                                 accelDetecting = true
-                                accelResult = "检测中..."
+                                accelResult = OperitApp.appContext.getString(R.string.str_327)
                                 val r = withContext(Dispatchers.IO) {
                                     AccelDetector.detect(context)
                                 }
@@ -4392,11 +4392,11 @@ Card(
                         if (accelDetecting) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
-                            Text("检测中...")
+                            Text(OperitApp.appContext.getString(R.string.str_327))
                         } else {
                             Icon(Icons.Filled.Speed, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("检测加速能力")
+                            Text(OperitApp.appContext.getString(R.string.str_328))
                         }
                     }
                     if (accelResult.isNotEmpty() && !accelDetecting) {
@@ -4434,9 +4434,9 @@ Card(
                     ) {
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color(0xFF7B1FA2))
                         Spacer(Modifier.width(8.dp))
-                        Text("AI 重绘预设", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(OperitApp.appContext.getString(R.string.ai_9), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Text(
-                            if (showAiRedrawPreset) "收起 ▲" else "展开 ▼",
+                            if (showAiRedrawPreset) OperitApp.appContext.getString(R.string.str_285) else OperitApp.appContext.getString(R.string.str_197),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF7B1FA2)
                         )
@@ -4461,26 +4461,26 @@ Card(
                             aiRedrawWidth = Prefs.aiRedrawWidth
                             aiRedrawHeight = Prefs.aiRedrawHeight
                             aiRedrawScheduler = Prefs.aiRedrawScheduler
-                            Toast.makeText(context, "已恢复默认预设（修复向微调）", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_223), Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Text("恢复默认", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7B1FA2))
+                        Text(OperitApp.appContext.getString(R.string.str_259), style = MaterialTheme.typography.labelMedium, color = Color(0xFF7B1FA2))
                     }
                     Text(
-                        "查看器点「AI 重绘」即按此预设一键修复微调（img2img，非生图）：自动部署启动引擎→重绘→完成自动停止。",
+                        OperitApp.appContext.getString(R.string.ai_11),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     // ---- 推理后端选择（本地自加载引擎 / LocalDream App）----
                     // ★ Lite 精简版：未打包本地引擎资产，固定走 LocalDream，不显示本地引擎选项
-                    Text("推理后端", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(OperitApp.appContext.getString(R.string.str_282), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!BuildConfig.IS_LITE) {
                             FilterChip(
                                 selected = aiRedrawBackend == "local",
                                 onClick = { aiRedrawBackend = "local"; Prefs.aiRedrawBackend = "local" },
-                                label = { Text("本地自加载引擎", style = MaterialTheme.typography.labelSmall) }
+                                label = { Text(OperitApp.appContext.getString(R.string.str_316), style = MaterialTheme.typography.labelSmall) }
                             )
                         }
                         FilterChip(
@@ -4491,16 +4491,16 @@ Card(
                     }
                     Text(
                         if (BuildConfig.IS_LITE)
-                            "精简版固定复用已安装的 LocalDream App（需先在 LocalDream 内就绪，App 不自部署模型）。"
+                            OperitApp.appContext.getString(R.string.str_380)
                         else if (aiRedrawBackend == "local")
-                            "本 App 内启动 Stable Diffusion 引擎（需已选 SD 模型包，用完全自动停止）。"
+                            OperitApp.appContext.getString(R.string.sd_2)
                         else
-                            "复用已安装的 LocalDream App（需先在 LocalDream 内就绪，本 App 不再自部署模型）。",
+                            OperitApp.appContext.getString(R.string.str_176),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     // ---- 提示词 ----
-                    Text("正向提示词（修复向）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(OperitApp.appContext.getString(R.string.str_348), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = aiRedrawPrompt,
                         onValueChange = { aiRedrawPrompt = it; Prefs.aiRedrawPrompt = it },
@@ -4509,7 +4509,7 @@ Card(
                         maxLines = 3
                     )
                     // ---- 负向提示词 ----
-                    Text("负向提示词", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(OperitApp.appContext.getString(R.string.str_406), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = aiRedrawNegative,
                         onValueChange = { aiRedrawNegative = it; Prefs.aiRedrawNegative = it },
@@ -4547,14 +4547,14 @@ Card(
                         steps = 8
                     )
                     Text(
-                        "默认 0.45：仅修复模糊/噪点/伪影，保持原图结构。想大幅重绘可调高到 0.7+。",
+                        OperitApp.appContext.getString(R.string.str_458),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     // ---- 输出分辨率（模型包档位，非自定义）----
-                    Text("输出分辨率（模型包档位）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(OperitApp.appContext.getString(R.string.str_425), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     Text(
-                        "QNN 模型为编译时固定形状，仅支持以下档位（与模型包 patch 对应），不能自定义任意尺寸。",
+                        OperitApp.appContext.getString(R.string.qnn_12),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4590,7 +4590,7 @@ Card(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     // ---- 调度器 ----
-                    Text("采样调度器", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(OperitApp.appContext.getString(R.string.str_445), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -4620,10 +4620,10 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("存储占用", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(OperitApp.appContext.getString(R.string.str_178), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     }
                     Text(
-                        "统计模型、历史记录、App 缓存等目录的磁盘占用。",
+                        OperitApp.appContext.getString(R.string.str_386),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4631,7 +4631,7 @@ Card(
                         onClick = {
                             scope.launch {
                                 storageChecking = true
-                                storageReport = "正在统计..."
+                                storageReport = OperitApp.appContext.getString(R.string.str_357)
                                 val r = withContext(Dispatchers.IO) { checkStorageUsage(context) }
                                 storageReport = r
                                 storageChecking = false
@@ -4643,11 +4643,11 @@ Card(
                         if (storageChecking) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
-                            Text("统计中...")
+                            Text(OperitApp.appContext.getString(R.string.str_385))
                         } else {
                             Icon(Icons.Filled.Storage, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("检查存储占用")
+                            Text(OperitApp.appContext.getString(R.string.str_326))
                         }
                     }
                     if (storageReport.isNotEmpty() && !storageChecking) {
@@ -4667,7 +4667,7 @@ Card(
                         onClick = {
                             scope.launch {
                                 storageChecking = true
-                                storageReport = "正在清理..."
+                                storageReport = OperitApp.appContext.getString(R.string.str_356)
                                 val freed = withContext(Dispatchers.IO) { clearAppCache(context) }
                                 storageReport = "已清理缓存，释放 ${formatSize(freed)}"
                                 // 清理后重新统计展示
@@ -4681,7 +4681,7 @@ Card(
                     ) {
                         Icon(Icons.Filled.DeleteSweep, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("清理缓存")
+                        Text(OperitApp.appContext.getString(R.string.str_364))
                     }
                 }
             }
@@ -4698,10 +4698,10 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Archive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("导出 / 导入", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(OperitApp.appContext.getString(R.string.str_191), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     }
                     Text(
-                        "备份全部抠图历史 + 应用设置；模型可逐个单独导出（完整模型列表中选择）。",
+                        OperitApp.appContext.getString(R.string.str_175),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -4713,7 +4713,7 @@ Card(
                     ) {
                         Icon(Icons.Filled.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("打开导出 / 导入页")
+                        Text(OperitApp.appContext.getString(R.string.str_261))
                     }
                 }
             }
@@ -4735,9 +4735,9 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("关于", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(OperitApp.appContext.getString(R.string.str_124), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.weight(1f))
-                        Icon(Icons.Filled.ChevronRight, contentDescription = "进入关于页", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Filled.ChevronRight, contentDescription = OperitApp.appContext.getString(R.string.str_428), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -4763,7 +4763,7 @@ Card(
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(24.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(12.dp))
-                        Text("历史加载中…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(OperitApp.appContext.getString(R.string.str_155), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Card(
@@ -4779,7 +4779,7 @@ Card(
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 if (historySelectedIds.isNotEmpty()) "已选 ${historySelectedIds.size} 条"
-                                else "抠图历史",
+                                else OperitApp.appContext.getString(R.string.str_266),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.weight(1f)
@@ -4789,7 +4789,7 @@ Card(
                                 TextButton(onClick = { historySelectedIds = emptySet() }) {
                                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(2.dp))
-                                    Text("取消")
+                                    Text(OperitApp.appContext.getString(R.string.str_162))
                                 }
                             } else {
                                 // ★ 视图切换：列表 / 网格
@@ -4801,7 +4801,7 @@ Card(
                                 ) {
                                     Icon(
                                         if (historyView == 0) Icons.Filled.GridView else Icons.Filled.List,
-                                        contentDescription = if (historyView == 0) "切换网格" else "切换列表",
+                                        contentDescription = if (historyView == 0) OperitApp.appContext.getString(R.string.str_141) else OperitApp.appContext.getString(R.string.str_140),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -4828,7 +4828,7 @@ Card(
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(Modifier.width(4.dp))
-                                    Text(if (anyExpanded) "一键收起" else "全部展开")
+                                    Text(if (anyExpanded) OperitApp.appContext.getString(R.string.str_107) else OperitApp.appContext.getString(R.string.str_122))
                                 }
                                 TextButton(
                                     onClick = {
@@ -4840,7 +4840,7 @@ Card(
                                 ) {
                                     Icon(Icons.Filled.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("清空")
+                                    Text(OperitApp.appContext.getString(R.string.str_365))
                                 }
                             }
                         }
@@ -4868,7 +4868,7 @@ Card(
                                     )
                                     Spacer(Modifier.width(2.dp))
                                     Text(
-                                        if (historySelectedIds.size == historyItems.size) "取消全选" else "全选",
+                                        if (historySelectedIds.size == historyItems.size) OperitApp.appContext.getString(R.string.str_164) else OperitApp.appContext.getString(R.string.str_121),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -4892,7 +4892,7 @@ Card(
                                                     }
                                                     val bmp = HistoryManager.loadResult(context, item)
                                                     // ★ 用 saveToRmbgFolderNamed 拿相册文件名，供 markSavedToAlbum 记录到 meta，
-                                                    //   保证查看器"删除图片"能精确定位（此前用 Boolean 版丢文件名 → album_file 空）。
+                                                    //   保证查看器删除图片能精确定位（此前用 Boolean 版丢文件名 → album_file 空）。
                                                     val albumFn = if (bmp != null) saveToRmbgFolderNamed(context, bmp) else null
                                                     if (!albumFn.isNullOrEmpty()) {
                                                         okCount++
@@ -4904,7 +4904,7 @@ Card(
                                             }
                                             historyBatchSaving = false
                                             historySelectedIds = emptySet()
-                                            // ★ 保存成功 → 刷新历史列表（显示"已存相册"标记）
+                                            // ★ 保存成功 → 刷新历史列表（显示已存相册标记）
                                             if (okCount > 0) historyVersion++
                                             Toast.makeText(
                                                 context,
@@ -4925,7 +4925,7 @@ Card(
                                     }
                                     Spacer(Modifier.width(2.dp))
                                     Text(
-                                        "批量保存",
+                                        OperitApp.appContext.getString(R.string.str_263),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -4943,7 +4943,7 @@ Card(
                                     Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                                     Spacer(Modifier.width(2.dp))
                                     Text(
-                                        "批量删除",
+                                        OperitApp.appContext.getString(R.string.str_264),
                                         color = MaterialTheme.colorScheme.error,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -4959,9 +4959,9 @@ Card(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             listOf(
-                                0 to "时间最新", 1 to "时间最旧",
-                                2 to "耗时最短", 3 to "耗时最长",
-                                4 to "模型名", 5 to "文件最小", 6 to "文件最大"
+                                0 to OperitApp.appContext.getString(R.string.str_293), 1 to OperitApp.appContext.getString(R.string.str_294),
+                                2 to OperitApp.appContext.getString(R.string.str_391), 3 to OperitApp.appContext.getString(R.string.str_392),
+                                4 to OperitApp.appContext.getString(R.string.str_335), 5 to OperitApp.appContext.getString(R.string.str_289), 6 to OperitApp.appContext.getString(R.string.str_288)
                             ).forEach { (mode, label) ->
                                 FilterChip(
                                     selected = historySort == mode,
@@ -4993,8 +4993,8 @@ Card(
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Filled.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
-                                    Text("暂无抠图记录", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("抠图完成后自动保存到此处", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(OperitApp.appContext.getString(R.string.str_296), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(OperitApp.appContext.getString(R.string.str_269), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         } else if (historyView == 1) {
@@ -5149,7 +5149,7 @@ Card(
                                                         if (item.savedToAlbum) {
                                                             Icon(
                                                                 Icons.Filled.CheckCircle,
-                                                                contentDescription = "已保存到相册",
+                                                                contentDescription = OperitApp.appContext.getString(R.string.str_199),
                                                                 modifier = Modifier.size(12.dp),
                                                                 tint = MaterialTheme.colorScheme.primary
                                                             )
@@ -5223,7 +5223,7 @@ Card(
                                     Spacer(Modifier.width(10.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(
-                                            if (items.size > 1) "同一原图 · ${items.size} 条记录" else "抠图记录",
+                                            if (items.size > 1) "同一原图 · ${items.size} 条记录" else OperitApp.appContext.getString(R.string.str_275),
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -5234,7 +5234,7 @@ Card(
                                         )
                                     }
                                     Text(
-                                        if (expanded) "收起 ▲" else "展开 ▼",
+                                        if (expanded) OperitApp.appContext.getString(R.string.str_285) else OperitApp.appContext.getString(R.string.str_197),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -5243,7 +5243,7 @@ Card(
                                         onClick = { pendingDeleteGroup = items },
                                         modifier = Modifier.size(28.dp)
                                     ) {
-                                        Icon(Icons.Filled.Delete, contentDescription = "删除整组", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Filled.Delete, contentDescription = OperitApp.appContext.getString(R.string.str_147), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 // ---- 组内记录（展开时显示）----
@@ -5330,11 +5330,11 @@ Card(
                                                 val infoParts = mutableListOf<String>()
                                                 if (item.durationMs > 0) infoParts += "${"%.1f".format(item.durationMs / 1000f)}s"
                                                 if (item.accel.isNotEmpty()) infoParts += item.accel
-                                                if (item.turbo) infoParts += "极速"
+                                                if (item.turbo) infoParts += OperitApp.appContext.getString(R.string.str_318)
                                                 // ★ 已存相册标记（防重复保存 + 用户可见）
-                                                if (item.savedToAlbum) infoParts += "已存相册"
+                                                if (item.savedToAlbum) infoParts += OperitApp.appContext.getString(R.string.str_214)
                                                 Text(
-                                                    if (infoParts.isNotEmpty()) infoParts.joinToString(" · ") else "点击查看大图",
+                                                    if (infoParts.isNotEmpty()) infoParts.joinToString(" · ") else OperitApp.appContext.getString(R.string.str_369),
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = if (item.savedToAlbum) MaterialTheme.colorScheme.primary
                                                         else MaterialTheme.colorScheme.onSurfaceVariant
@@ -5346,7 +5346,7 @@ Card(
                                                     HistoryManager.invalidateHistoryCache()
                                                     historyVersion++
                                                 }) {
-                                                    Icon(Icons.Filled.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                                                    Icon(Icons.Filled.Delete, contentDescription = OperitApp.appContext.getString(R.string.str_143), tint = MaterialTheme.colorScheme.error)
                                                 }
                                             }
                                         }
@@ -5362,7 +5362,7 @@ Card(
             pendingDeleteGroup?.let { deleteGroup ->
                 AlertDialog(
                     onDismissRequest = { pendingDeleteGroup = null },
-                    title = { Text("删除整组记录") },
+                    title = { Text(OperitApp.appContext.getString(R.string.str_148)) },
                     text = { Text("确定删除这 ${deleteGroup.size} 条抠图记录吗？此操作不可撤销。") },
                     confirmButton = {
                         TextButton(onClick = {
@@ -5370,10 +5370,10 @@ Card(
                             HistoryManager.invalidateHistoryCache()
                             pendingDeleteGroup = null
                             historyVersion++
-                        }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        }) { Text(OperitApp.appContext.getString(R.string.str_143), color = MaterialTheme.colorScheme.error) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { pendingDeleteGroup = null }) { Text("取消") }
+                        TextButton(onClick = { pendingDeleteGroup = null }) { Text(OperitApp.appContext.getString(R.string.str_162)) }
                     }
                 )
             }
@@ -5555,10 +5555,10 @@ Card(
                             }
                             // ★ 结果图：底下垫背景色（棋盘/纯色，持久化自查看器设置）让透明通道可见
                             val resBg = when (viewerBgColor) {
-                                "白色" -> Color.White
-                                "黑色" -> Color.Black
-                                "浅灰" -> Color(0xFFBDBDBD)
-                                "绿色" -> Color(0xFF4CAF50)
+                                OperitApp.appContext.getString(R.string.str_375) -> Color.White
+                                OperitApp.appContext.getString(R.string.str_457) -> Color.Black
+                                OperitApp.appContext.getString(R.string.str_362) -> Color(0xFFBDBDBD)
+                                OperitApp.appContext.getString(R.string.str_387) -> Color(0xFF4CAF50)
                                 else -> null // 棋盘
                             }
                             Box(
@@ -5618,7 +5618,7 @@ Card(
                             val prev = doUndo()
                             if (prev != null) {
                                 resultBitmap = prev
-                                statusText = "已撤销"
+                                statusText = OperitApp.appContext.getString(R.string.str_228)
                             }
                         },
                         enabled = undoStack.isNotEmpty() && !isProcessing,
@@ -5629,14 +5629,14 @@ Card(
                     ) {
                         Icon(Icons.Filled.Undo, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("撤销", fontSize = 13.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_283), fontSize = 13.sp)
                     }
                     OutlinedButton(
                         onClick = {
                             val next = doRedo()
                             if (next != null) {
                                 resultBitmap = next
-                                statusText = "已前进"
+                                statusText = OperitApp.appContext.getString(R.string.str_205)
                             }
                         },
                         enabled = redoStack.isNotEmpty() && !isProcessing,
@@ -5647,7 +5647,7 @@ Card(
                     ) {
                         Icon(Icons.Filled.Redo, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("前进", fontSize = 13.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_151), fontSize = 13.sp)
                     }
                     // 小尺寸「按住对比」：按住显示原图，松开恢复结果
                     // ★ 用 requireUnconsumed=false 才能在本按钮自身 clickable 消费 down 后仍收到手势
@@ -5667,9 +5667,9 @@ Card(
                         contentAlignment = Alignment.Center
                     ) {
                         if (comparePressed) {
-                            Text("松开", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                            Text(OperitApp.appContext.getString(R.string.str_317), fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                         } else {
-                            Icon(Icons.Filled.Compare, contentDescription = "按住看原图", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Filled.Compare, contentDescription = OperitApp.appContext.getString(R.string.str_279), modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -5767,7 +5767,7 @@ Card(
                             .height(48.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("分享", fontSize = 13.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_135), fontSize = 13.sp)
                     }
                     OutlinedButton(
                         onClick = { saveLauncher.launch("rmbg_${System.currentTimeMillis()}.png") },
@@ -5776,7 +5776,7 @@ Card(
                             .height(48.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("另存为", fontSize = 13.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_165), fontSize = 13.sp)
                     }
                 }
             }
@@ -6009,7 +6009,7 @@ Card(
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showQuickModelPicker = false; quickModelSwitching = false }) { Text("取消") }
+                TextButton(onClick = { showQuickModelPicker = false; quickModelSwitching = false }) { Text(OperitApp.appContext.getString(R.string.str_162)) }
             }
         )
     }
@@ -6127,10 +6127,10 @@ Card(
                     // ★ 大图预览区：weight(1f) 占满剩余屏幕（大部分屏幕），图片垂直居中
                     //   背景色可切换：棋盘 / 白 / 黑 / 浅灰 / 绿
                     val bgSolid = when (viewerBgColor) {
-                        "白色" -> Color.White
-                        "黑色" -> Color.Black
-                        "浅灰" -> Color(0xFFBDBDBD)
-                        "绿色" -> Color(0xFF4CAF50)
+                        OperitApp.appContext.getString(R.string.str_375) -> Color.White
+                        OperitApp.appContext.getString(R.string.str_457) -> Color.Black
+                        OperitApp.appContext.getString(R.string.str_362) -> Color(0xFFBDBDBD)
+                        OperitApp.appContext.getString(R.string.str_387) -> Color(0xFF4CAF50)
                         else -> null // 棋盘
                     }
                     var vScale by remember { mutableStateOf(1f) }
@@ -6157,7 +6157,7 @@ Card(
                         val vBaseLeft = (vCanvasW - vBaseW) / 2f
                         val vBaseTop = (vCanvasH - vBaseH) / 2f
 
-                        // ★ 棋盘背景（仅"棋盘"模式绘制；其他纯色模式不画棋盘格子）
+                        // ★ 棋盘背景（仅棋盘模式绘制；其他纯色模式不画棋盘格子）
                         if (bgSolid == null) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 val cell = with(density) { 20.dp.toPx() }
@@ -6248,10 +6248,10 @@ Card(
                         )
                         viewerBgChoices.forEach { choice ->
                             val bgPreview = when (choice) {
-                                "白色" -> Color.White
-                                "黑色" -> Color.Black
-                                "浅灰" -> Color(0xFFBDBDBD)
-                                "绿色" -> Color(0xFF4CAF50)
+                                OperitApp.appContext.getString(R.string.str_375) -> Color.White
+                                OperitApp.appContext.getString(R.string.str_457) -> Color.Black
+                                OperitApp.appContext.getString(R.string.str_362) -> Color(0xFFBDBDBD)
+                                OperitApp.appContext.getString(R.string.str_387) -> Color(0xFF4CAF50)
                                 else -> null
                             }
                             val selected = viewerBgColor == choice
@@ -6270,7 +6270,7 @@ Card(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (choice == "棋盘" && bgPreview == null) {
+                                if (choice == OperitApp.appContext.getString(R.string.str_329) && bgPreview == null) {
                                     // 棋盘色块内画小格子预览
                                     Canvas(Modifier.fillMaxSize()) {
                                         val cell = size.minDimension / 2f
@@ -6306,7 +6306,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(3.dp))
-                                Text("编辑", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                                Text(OperitApp.appContext.getString(R.string.str_388), fontSize = 12.sp, maxLines = 1, softWrap = false)
                             }
                             // ★★ 4x 超分（独立按钮，不入历史；可保存/分享）
                             // ★ 小图提示：当前图短边 < 256 时（超分引擎固定 输入≤512→输出≤2048，小图超分收益最大），
@@ -6332,7 +6332,7 @@ Card(
                                         color = Color(0xFFFF8F00)
                                     )
                                     Spacer(Modifier.width(4.dp))
-                                    Text("超分中…", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.str_411), fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                                 } else {
                                     Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
                                     Spacer(Modifier.width(3.dp))
@@ -6341,7 +6341,7 @@ Card(
                                         Text("❗", fontSize = 12.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                                         Spacer(Modifier.width(1.dp))
                                     }
-                                    Text("4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.str_002), fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                                 }
                             }
                             // ★★ 智能选区已并入「编辑」页（PostProcessScreen 的「选区」tab）
@@ -6353,7 +6353,7 @@ Card(
                                     if (aiRedrawRunning) return@OutlinedButton
                                     // ★ 模型可用性：zip 在 或 已部署（zip 部署后自动删除）都算有模型
                                     if (!AiRedrawEngine.isModelReady(context)) {
-                                        Toast.makeText(context, "请先选择 SD 模型包 zip", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.sd_3), Toast.LENGTH_SHORT).show()
                                         aiModelZipPicker.launch("*/*")
                                         return@OutlinedButton
                                     }
@@ -6374,11 +6374,11 @@ Card(
                                         color = Color(0xFF7B1FA2)
                                     )
                                     Spacer(Modifier.width(4.dp))
-                                    Text("重绘中...", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.str_448), fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
                                 } else {
                                     Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
                                     Spacer(Modifier.width(3.dp))
-                                    Text("AI 重绘", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.ai_4), fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
                                 }
                             }
                         }
@@ -6393,11 +6393,11 @@ Card(
                                     if (prev != null && !prev.isRecycled) {
                                         resultBitmap = prev
                                         viewerBitmap = prev
-                                        viewerItem = null   // ★ 撤销到全局历史中的某一步，脱离"历史记录"身份，与前进按钮行为一致
+                                        viewerItem = null   // ★ 撤销到全局历史中的某一步，脱离历史记录身份，与前进按钮行为一致
                                         viewerBgOrigin = null
                                         viewerBgStrength = 0
                                         resetPostVars()
-                                        statusText = "已撤销"
+                                        statusText = OperitApp.appContext.getString(R.string.str_228)
                                     }
                                 },
                                 enabled = undoStack.isNotEmpty() && !isProcessing,
@@ -6406,7 +6406,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.Undo, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("撤销", fontSize = 12.sp)
+                                Text(OperitApp.appContext.getString(R.string.str_283), fontSize = 12.sp)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -6418,7 +6418,7 @@ Card(
                                         viewerBgOrigin = null // ★ 切换查看对象，重置缓存
                                         viewerBgStrength = 0
                                         resetPostVars()
-                                        statusText = "已前进"
+                                        statusText = OperitApp.appContext.getString(R.string.str_205)
                                     }
                                 },
                                 enabled = redoStack.isNotEmpty() && !isProcessing,
@@ -6427,7 +6427,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.Redo, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("前进", fontSize = 12.sp)
+                                Text(OperitApp.appContext.getString(R.string.str_151), fontSize = 12.sp)
                             }
                             // 小「按住对比」：按住显示原图，松开恢复结果
                             Box(
@@ -6445,9 +6445,9 @@ Card(
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (comparePressed) {
-                                    Text("松开", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                    Text(OperitApp.appContext.getString(R.string.str_317), fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
                                 } else {
-                                    Icon(Icons.Filled.Compare, contentDescription = "按住看原图", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Filled.Compare, contentDescription = OperitApp.appContext.getString(R.string.str_279), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
@@ -6468,8 +6468,8 @@ Card(
                                         viewerItem = null; viewerBitmap = null; viewerBgOrigin = null; viewerBgStrength = 0; viewerOriginBitmap = null; postProcessHistoryItem = null; resetPostVars()
                                         if (!isHistory) showOriginalViewer = false
                                         currentTab = 0
-                                        statusText = if (isHistory) "已载入历史结果，可再次抠图或调整阈值" else "已载入结果，可再次抠图或调整阈值"
-                                        Toast.makeText(context, "已载入，可再次抠图", Toast.LENGTH_SHORT).show()
+                                        statusText = if (isHistory) OperitApp.appContext.getString(R.string.str_230) else OperitApp.appContext.getString(R.string.str_231)
+                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.str_232), Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.weight(1f).height(40.dp),
@@ -6478,7 +6478,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("再次抠图", fontSize = 13.sp)
+                                Text(OperitApp.appContext.getString(R.string.str_132), fontSize = 13.sp)
                             }
                             // ★ 已存相册的历史记录 → 反转为「删除图片」（从相册删除该图 + 取消已存相册标记）；
                             //   未存相册 → 仍是「保存相册」
@@ -6493,7 +6493,7 @@ Card(
                                             historyVersion++
                                         }
                                     } else {
-                                        // ★ 历史记录保存成功 → 标记已存相册 + 刷新历史列表（显示"已存相册"）
+                                        // ★ 历史记录保存成功 → 标记已存相册 + 刷新历史列表（显示已存相册）
                                         if (viewer != null) {
                                             val v = viewer!!
                                             // saveViewerToAlbum 内部会 markSavedToAlbum（含相册文件名），这里同步按钮状态
@@ -6514,11 +6514,11 @@ Card(
                                 if (isSavedToAlbum) {
                                     Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.error)
                                     Spacer(Modifier.width(4.dp))
-                                    Text("删除图片", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                                    Text(OperitApp.appContext.getString(R.string.str_145), fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                                 } else {
                                     Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(15.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("保存相册", fontSize = 13.sp)
+                                    Text(OperitApp.appContext.getString(R.string.str_118), fontSize = 13.sp)
                                 }
                             }
                         }
@@ -6535,7 +6535,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("另存为", fontSize = 13.sp)
+                                Text(OperitApp.appContext.getString(R.string.str_165), fontSize = 13.sp)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -6552,7 +6552,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("分享", fontSize = 13.sp)
+                                Text(OperitApp.appContext.getString(R.string.str_135), fontSize = 13.sp)
                             }
                         }
                     } else {
@@ -6572,7 +6572,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(3.dp))
-                                Text("高级编辑", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                                Text(OperitApp.appContext.getString(R.string.str_455), fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                             // ★★ 4x 超分（原图查看也可用，不入历史；已超分/超分中禁用防无限超分）
                             OutlinedButton(
@@ -6593,11 +6593,11 @@ Card(
                                         color = Color(0xFFFF8F00)
                                     )
                                     Spacer(Modifier.width(4.dp))
-                                    Text("超分中…", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.str_411), fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                                 } else {
                                     Icon(Icons.Filled.ZoomIn, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF8F00))
                                     Spacer(Modifier.width(3.dp))
-                                    Text("4x 超分", fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.str_002), fontSize = 11.sp, color = Color(0xFFFF8F00), maxLines = 1, softWrap = false)
                                 }
                             }
                             // ★ AI 重绘（原图）：一键执行（参数用设置页预设）。无模型包弹选择器；有/已部署则直接触发
@@ -6606,7 +6606,7 @@ Card(
                                     if (aiRedrawRunning) return@OutlinedButton
                                     // ★ 模型可用性：zip 在 或 已部署（zip 部署后自动删除）都算有模型
                                     if (!AiRedrawEngine.isModelReady(context)) {
-                                        Toast.makeText(context, "请先选择 SD 模型包 zip", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, OperitApp.appContext.getString(R.string.sd_3), Toast.LENGTH_SHORT).show()
                                         aiModelZipPicker.launch("*/*")
                                         return@OutlinedButton
                                     }
@@ -6627,11 +6627,11 @@ Card(
                                         color = Color(0xFF7B1FA2)
                                     )
                                     Spacer(Modifier.width(4.dp))
-                                    Text("重绘中...", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.str_448), fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
                                 } else {
                                     Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFF7B1FA2))
                                     Spacer(Modifier.width(3.dp))
-                                    Text("AI 重绘", fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
+                                    Text(OperitApp.appContext.getString(R.string.ai_4), fontSize = 11.sp, color = Color(0xFF7B1FA2), maxLines = 1, softWrap = false)
                                 }
                             }
                         }
@@ -6653,7 +6653,7 @@ Card(
                             }
                             OutlinedButton(
                                 onClick = {
-                                    // ★ 历史记录保存成功 → 标记已存相册 + 刷新历史列表（显示"已存相册"）
+                                    // ★ 历史记录保存成功 → 标记已存相册 + 刷新历史列表（显示已存相册）
                                     if (saveViewerToAlbum(context, bmp, viewer) && viewer != null) historyVersion++
                                 },
                                 modifier = Modifier.weight(1f).height(40.dp),
@@ -6663,7 +6663,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(3.dp))
-                                Text("保存相册", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                                Text(OperitApp.appContext.getString(R.string.str_118), fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -6677,7 +6677,7 @@ Card(
                             ) {
                                 Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(3.dp))
-                                Text("另存为", fontSize = 11.sp, maxLines = 1, softWrap = false)
+                                Text(OperitApp.appContext.getString(R.string.str_165), fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -7200,7 +7200,7 @@ private fun downscaleForShare(bmp: Bitmap, maxSide: Int): Bitmap {
 private fun saveToRmbgFolder(context: android.content.Context, bmp: Bitmap?): Boolean =
     saveToRmbgFolderNamed(context, bmp) != null
 
-/** 保存到 Pictures/rmbg 并返回相册内文件名（供 markSavedToAlbum 记录，便于查看器"删除图片"精确定位）；
+/** 保存到 Pictures/rmbg 并返回相册内文件名（供 markSavedToAlbum 记录，便于查看器删除图片精确定位）；
  *  失败返回 null。 */
 private fun saveToRmbgFolderNamed(context: android.content.Context, bmp: Bitmap?): String? {
     if (bmp == null) return null
@@ -7228,7 +7228,7 @@ private fun saveToRmbgFolderNamed(context: android.content.Context, bmp: Bitmap?
 }
 
 /** 保存查看器中的图片到应用默认文件夹 Pictures/rmbg（无权限）。
- *  @param histItem 可空：查看器若打开的是历史记录，传入该记录；保存成功后标记"已存相册"防止重复保存
+ *  @param histItem 可空：查看器若打开的是历史记录，传入该记录；保存成功后标记已存相册防止重复保存
  *  @return 是否保存成功 */
 private fun saveViewerToAlbum(
     context: android.content.Context,
@@ -7236,13 +7236,13 @@ private fun saveViewerToAlbum(
     histItem: HistoryManager.HistoryItem? = null
 ): Boolean {
     if (bmp == null) return false
-    // ★ 防重复：历史记录已标记"已存相册" → 直接提示不重复写入
+    // ★ 防重复：历史记录已标记已存相册 → 直接提示不重复写入
     if (histItem != null && histItem.savedToAlbum) {
         Toast.makeText(context, "该记录已保存到相册 rmbg 文件夹", Toast.LENGTH_SHORT).show()
         return false
     }
     val fileName = saveToRmbgFolderNamed(context, bmp)
-    // ★ 历史记录保存成功 → 标记已存相册（防重复 + UI 显示"已存相册"，并记录相册文件名供删除定位）
+    // ★ 历史记录保存成功 → 标记已存相册（防重复 + UI 显示已存相册，并记录相册文件名供删除定位）
     if (fileName != null && histItem != null) {
         HistoryManager.markSavedToAlbum(context, histItem, fileName)
     }
@@ -7254,8 +7254,8 @@ private fun saveViewerToAlbum(
     return fileName != null
 }
 
-/** ★ 从系统相册 Pictures/rmbg 删除查看器当前显示的这张图（查看器"删除图片"按钮）。
- *  按历史记录 meta 中记录的相册文件名（album_file）精确删除；删除成功 → 取消"已存相册"标记。
+/** ★ 从系统相册 Pictures/rmbg 删除查看器当前显示的这张图（查看器删除图片按钮）。
+ *  按历史记录 meta 中记录的相册文件名（album_file）精确删除；删除成功 → 取消已存相册标记。
  *  @return 是否删除成功 */
 private fun deleteViewerFromAlbum(
     context: android.content.Context,
@@ -7283,7 +7283,7 @@ private fun deleteViewerFromAlbum(
         ) > 0
     } else false
     if (deleted) {
-        // ★ 取消该记录的"已存相册"标记（meta + 内存缓存），UI 恢复"保存相册"按钮
+        // ★ 取消该记录的"已存相册标记（meta + 内存缓存），UI 恢复保存相册"按钮
         HistoryManager.markUnSavedFromAlbum(context, histItem)
         Toast.makeText(context, "已从相册 rmbg 文件夹删除该图片", Toast.LENGTH_SHORT).show()
     } else {

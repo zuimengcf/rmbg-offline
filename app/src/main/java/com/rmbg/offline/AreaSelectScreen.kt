@@ -56,11 +56,11 @@ fun AreaSelectScreen(
         containerColor = Color(0xFF101418),
         topBar = {
             TopAppBar(
-                title = { Text("高级编辑 · 区域选择", color = Color.White, fontSize = 17.sp) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = Color.White) } },
+                title = { Text(OperitApp.appContext.getString(R.string.str_456), color = Color.White, fontSize = 17.sp) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = OperitApp.appContext.getString(R.string.str_426), tint = Color.White) } },
                 actions = {
-                    TextButton(onClick = onSwitchModel) { Text("切模型", color = Color(0xFFFFB300)) }
-                    TextButton(onClick = onEnterBrush) { Text("编辑", color = Color(0xFF64B5F6)) }
+                    TextButton(onClick = onSwitchModel) { Text(OperitApp.appContext.getString(R.string.str_142), color = Color(0xFFFFB300)) }
+                    TextButton(onClick = onEnterBrush) { Text(OperitApp.appContext.getString(R.string.str_388), color = Color(0xFF64B5F6)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF101418))
             )
@@ -80,7 +80,7 @@ fun AreaSelectScreen(
                             }
                             if (eng == null) {
                                 isRmbg = false
-                                Toast.makeText(context, "模型未加载，请先在主界面确保模型就绪", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_343), Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
                             val bw = original.width; val bh = original.height
@@ -99,8 +99,8 @@ fun AreaSelectScreen(
                             isRmbg = false
                             if (res != null && !res.isRecycled) {
                                 display = res; displayV++
-                                Toast.makeText(context, "已局部重抠（选区内）", Toast.LENGTH_SHORT).show()
-                            } else Toast.makeText(context, "局部重抠失败", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_217), Toast.LENGTH_SHORT).show()
+                            } else Toast.makeText(context, OperitApp.appContext.getString(R.string.str_195), Toast.LENGTH_SHORT).show()
                         }
                     },
                     // ★ 始终可点：engine 为空时点击提示（不再静默禁用，避免看起来"只有区域重绘"）
@@ -108,7 +108,7 @@ fun AreaSelectScreen(
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Icon(Icons.Filled.Crop, contentDescription = null); Spacer(Modifier.width(8.dp))
-                    Text(if (isRmbg) "局部重抠中..." else "局部重抠（仅抠选区内）", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(if (isRmbg) OperitApp.appContext.getString(R.string.str_194) else OperitApp.appContext.getString(R.string.str_196), fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 }
                 // ★ AI 区域重绘：与"局部重抠"并列，共用同一套选区框 + 同一张工作画布（display）
                 Button(
@@ -128,8 +128,8 @@ fun AreaSelectScreen(
                             isRedraw = false
                             if (res != null && !res.isRecycled) {
                                 display = res; displayV++
-                                Toast.makeText(context, "选区内 AI 重绘完成，可继续框选其他区域", Toast.LENGTH_SHORT).show()
-                            } else Toast.makeText(context, "选区内 AI 重绘失败", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.ai_13), Toast.LENGTH_SHORT).show()
+                            } else Toast.makeText(context, OperitApp.appContext.getString(R.string.ai_12), Toast.LENGTH_SHORT).show()
                         }
                     },
                     enabled = !isRedraw,
@@ -137,13 +137,13 @@ fun AreaSelectScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7B1FA2))
                 ) {
                     Icon(Icons.Filled.AutoAwesome, contentDescription = null); Spacer(Modifier.width(8.dp))
-                    Text(if (isRedraw) "AI 区域重绘中..." else "AI 区域重绘（选区内）", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(if (isRedraw) OperitApp.appContext.getString(R.string.ai) else OperitApp.appContext.getString(R.string.ai_2), fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
-                        Text("拖动移动 · 拉右下角改大小", color = Color(0xFF90A4AE), fontSize = 11.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_276), color = Color(0xFF90A4AE), fontSize = 11.sp)
                     }
-                    TextButton(onClick = { if (display != null && !display.isRecycled) onApply(display) }) { Text("应用", color = Color(0xFF64B5F6), fontSize = 12.sp) }
+                    TextButton(onClick = { if (display != null && !display.isRecycled) onApply(display) }) { Text(OperitApp.appContext.getString(R.string.str_245), color = Color(0xFF64B5F6), fontSize = 12.sp) }
                 }
             }
         }

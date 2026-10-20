@@ -405,10 +405,10 @@ import kotlin.math.roundToInt
             if (viewMode == 2) {
                 // ★ 预览背景跟随 Prefs.viewerBgColor 设置（与应用查看器一致）
                 when (Prefs.viewerBgColor) {
-                    "白色" -> native.drawColor(0xFFFFFFFF.toInt())
-                    "黑色" -> native.drawColor(0xFF000000.toInt())
-                    "浅灰" -> native.drawColor(0xFFBDBDBD.toInt())
-                    "绿色" -> native.drawColor(0xFF4CAF50.toInt())
+                    OperitApp.appContext.getString(R.string.str_375) -> native.drawColor(0xFFFFFFFF.toInt())
+                    OperitApp.appContext.getString(R.string.str_457) -> native.drawColor(0xFF000000.toInt())
+                    OperitApp.appContext.getString(R.string.str_362) -> native.drawColor(0xFFBDBDBD.toInt())
+                    OperitApp.appContext.getString(R.string.str_387) -> native.drawColor(0xFF4CAF50.toInt())
                     else -> {
                         // 棋盘格
                         val cell = 26.dp.toPx()
@@ -557,10 +557,10 @@ import kotlin.math.roundToInt
             if (viewMode == 2) {
                 // 预览：跟随 Prefs.viewerBgColor 背景色局部
                 when (Prefs.viewerBgColor) {
-                    "白色" -> native.drawColor(0xFFFFFFFF.toInt())
-                    "黑色" -> native.drawColor(0xFF000000.toInt())
-                    "浅灰" -> native.drawColor(0xFFBDBDBD.toInt())
-                    "绿色" -> native.drawColor(0xFF4CAF50.toInt())
+                    OperitApp.appContext.getString(R.string.str_375) -> native.drawColor(0xFFFFFFFF.toInt())
+                    OperitApp.appContext.getString(R.string.str_457) -> native.drawColor(0xFF000000.toInt())
+                    OperitApp.appContext.getString(R.string.str_362) -> native.drawColor(0xFFBDBDBD.toInt())
+                    OperitApp.appContext.getString(R.string.str_387) -> native.drawColor(0xFF4CAF50.toInt())
                     else -> {
                         val cell = 26.dp.toPx()
                         val cp = Paint().apply { style = Paint.Style.FILL }

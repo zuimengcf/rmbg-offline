@@ -64,8 +64,8 @@ fun AiRedrawAreaScreen(
         containerColor = Color(0xFF101418),
         topBar = {
             TopAppBar(
-                title = { Text("AI 重绘 · 区域编辑", color = Color.White, fontSize = 17.sp) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = Color.White) } },
+                title = { Text(OperitApp.appContext.getString(R.string.ai_6), color = Color.White, fontSize = 17.sp) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = OperitApp.appContext.getString(R.string.str_426), tint = Color.White) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF101418))
             )
         },
@@ -92,21 +92,21 @@ fun AiRedrawAreaScreen(
                             isRunning = false
                             if (res != null && !res.isRecycled) {
                                 display = res; displayV++
-                                Toast.makeText(context, "选区内重绘完成，可继续框选其他区域", Toast.LENGTH_SHORT).show()
-                            } else Toast.makeText(context, "选区内重绘失败", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, OperitApp.appContext.getString(R.string.str_434), Toast.LENGTH_SHORT).show()
+                            } else Toast.makeText(context, OperitApp.appContext.getString(R.string.str_433), Toast.LENGTH_SHORT).show()
                         }
                     },
                     enabled = !isRunning && !running,
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     Icon(Icons.Filled.AutoAwesome, contentDescription = null); Spacer(Modifier.width(8.dp))
-                    Text(if (isRunning) "重绘中..." else "AI 重绘选区内", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(if (isRunning) OperitApp.appContext.getString(R.string.str_448) else OperitApp.appContext.getString(R.string.ai_8), fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
-                        Text("框选局部重绘 · 512 档位对应局部细节，不糊", color = Color(0xFF90A4AE), fontSize = 11.sp)
+                        Text(OperitApp.appContext.getString(R.string.str_325), color = Color(0xFF90A4AE), fontSize = 11.sp)
                     }
-                    TextButton(onClick = { if (display != null && !display.isRecycled) onApply(display) }) { Text("应用", color = Color(0xFF64B5F6), fontSize = 12.sp) }
+                    TextButton(onClick = { if (display != null && !display.isRecycled) onApply(display) }) { Text(OperitApp.appContext.getString(R.string.str_245), color = Color(0xFF64B5F6), fontSize = 12.sp) }
                 }
             }
         }

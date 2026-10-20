@@ -1,4 +1,6 @@
 package com.rmbg.offline.ml
+import com.rmbg.offline.R
+import com.rmbg.offline.OperitApp
 
 import android.content.Context
 import android.os.Handler
@@ -77,7 +79,7 @@ object ModelManager {
             hfRepo = "briaai/RMBG-1.4",
             hfFile = "onnx/model.onnx",
             sizeBytes = 176_153_355L,
-            description = "通用抠图 · 官方原版 · 176MB"
+            description = OperitApp.appContext.getString(R.string.str_439)
         ),
         BuiltinModel(
             id = "rmbg20",
@@ -85,7 +87,7 @@ object ModelManager {
             hfRepo = "briaai/RMBG-2.0",
             hfFile = "onnx/model_fp16.onnx",
             sizeBytes = 513_576_499L,
-            description = "BiRefNet 最强 · 513MB（需 HF Token）"
+            description = OperitApp.appContext.getString(R.string.token)
         ),
         BuiltinModel(
             id = "modnet",
@@ -93,7 +95,7 @@ object ModelManager {
             hfRepo = "Xenova/modnet",
             hfFile = "onnx/model.onnx",
             sizeBytes = 25_888_640L,
-            description = "人像抠图 · 轻量快速 · 25MB"
+            description = OperitApp.appContext.getString(R.string.str_115)
         ),
         BuiltinModel(
             id = "anime_seg",
@@ -101,7 +103,7 @@ object ModelManager {
             hfRepo = "skytnt/anime-seg",
             hfFile = "isnetis.onnx",
             sizeBytes = 176_069_933L,
-            description = "动漫人物抠图 · ISNet · 176MB",
+            description = OperitApp.appContext.getString(R.string.str_153),
             // ★ 内置默认模型：CPU 版 animeseg 打包在 APK assets（models/anime_seg.onnx，176MB），
             //   离线可用、免下载，作为完整版默认抠图模型。
             assetPath = "models/anime_seg.onnx"
@@ -109,21 +111,21 @@ object ModelManager {
         // ★ 量化直链模型（GitHub/HF 直链，不走镜像循环）
         BuiltinModel(
             id = "rmbg20_quant",
-            name = "RMBG-2.0 量化",
+            name = OperitApp.appContext.getString(R.string.rmbg_6),
             hfRepo = "CVHub520/X-AnyLabeling", // 仅作显示/配置参考，实际走 directUrl
             hfFile = "bria-rmbg-2.0-quant.onnx",
             directUrl = "https://github.com/CVHub520/X-AnyLabeling/releases/download/v3.0.0/bria-rmbg-2.0-quant.onnx",
             sizeBytes = 366_087_549L,
-            description = "BiRefNet 量化 · 349MB · GitHub 直链"
+            description = OperitApp.appContext.getString(R.string.str_018)
         ),
         BuiltinModel(
             id = "rmbg14_quant",
-            name = "RMBG-1.4 量化",
+            name = OperitApp.appContext.getString(R.string.rmbg_4),
             hfRepo = "briaai/RMBG-1.4", // 仅作显示/配置参考，实际走 directUrl
             hfFile = "onnx/model_quantized.onnx",
             directUrl = "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx?download=true",
             sizeBytes = 44_403_226L,
-            description = "RMBG-1.4 量化 · 42MB · HF 直链"
+            description = OperitApp.appContext.getString(R.string.rmbg_5)
         )
     )
 
@@ -137,7 +139,7 @@ object ModelManager {
             hfFile = "qnn/qnn_rmbg14_sdk250_v2.onnx",
             hfBinFile = "qnn/qnn_rmbg14_sdk250_v2.bin",
             sizeBytes = 99_079_792L + 855L,
-            description = "RMBG-1.4 · SDK250 离线编译 · 99MB（新版）",
+            description = OperitApp.appContext.getString(R.string.rmbg_3),
             kind = ModelKind.QNN,
             assetOnnx = "qnn/qnn_rmbg14_sdk250_v2.onnx",
             assetBin = "qnn/qnn_rmbg14_sdk250_v2.bin",
@@ -151,7 +153,7 @@ object ModelManager {
             hfFile = "qnn/qnn_animeseg_v73.onnx",
             hfBinFile = "qnn/qnn_animeseg_v73.bin",
             sizeBytes = 90_789_176L + 814L,
-            description = "Anime-Seg · ISNet · SM8550/V73 离线编译 · 87MB",
+            description = OperitApp.appContext.getString(R.string.str_015),
             kind = ModelKind.QNN,
             assetOnnx = "qnn/qnn_animeseg_v73.onnx",
             assetBin = "qnn/qnn_animeseg_v73.bin",
@@ -165,7 +167,7 @@ object ModelManager {
             hfFile = "qnn/qnn_modnet_sm8550_512.onnx",
             hfBinFile = "qnn/qnn_modnet_sm8550_512.bin",
             sizeBytes = 15_930_872L + 841L,
-            description = "MODNet · 512×512 · SM8550/V73 离线编译 · 15MB",
+            description = OperitApp.appContext.getString(R.string.str_026),
             kind = ModelKind.QNN,
             assetOnnx = "qnn/qnn_modnet_sm8550_512.onnx",
             assetBin = "qnn/qnn_modnet_sm8550_512.bin",
@@ -179,7 +181,7 @@ object ModelManager {
             hfFile = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip",
             hfZip = "qnn/qnn_realesrgan_sm8550_qairt250_fp32.zip",
             sizeBytes = 30_034_102L,
-            description = "4x 超分 · SM8350~SM8850 多型号 QNN HTP · 28-30MB（512→2048）",
+            description = OperitApp.appContext.getString(R.string.qnn),
             kind = ModelKind.QNN
         )
     )
@@ -250,7 +252,7 @@ object ModelManager {
             _localModels = null // 失效缓存
             "local_$safeName"
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "导入失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.str_184), e)
             null
         }
     }
@@ -282,7 +284,7 @@ object ModelManager {
                         !name.endsWith(".bin", ignoreCase = true)) continue
                     totalBytes += entry.size
                     if (totalBytes > 4L * 1024 * 1024 * 1024) { // 4GB 上限（容纳 1GB+ 的 QNN bin，防 zip 炸弹）
-                        android.util.Log.e("RMBG-MODEL", "zip 解压超限，中止")
+                        android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_7))
                         return@importLocalModelZip null
                     }
                     // 防路径穿越：只取文件名
@@ -299,7 +301,7 @@ object ModelManager {
             val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) }
                 ?: emptyArray()
             if (onnxFiles.isEmpty()) {
-                android.util.Log.e("RMBG-MODEL", "zip 内无 .onnx 文件")
+                android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_3))
                 return@importLocalModelZip null
             }
             val mainOnnx = onnxFiles.firstOrNull { it.nameWithoutExtension == displayName }
@@ -362,7 +364,7 @@ object ModelManager {
             _localModels = null // 失效缓存
             result = "local_$safeName"
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "zip 导入失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_4), e)
             result = null
         } finally {
             try { tmpDir.deleteRecursively() } catch (_: Exception) {}
@@ -399,7 +401,7 @@ object ModelManager {
                     if (!name.endsWith(".onnx", ignoreCase = true) && !name.endsWith(".bin", ignoreCase = true)) continue
                     totalBytes += entry.size
                     if (totalBytes > 4L * 1024 * 1024 * 1024) {
-                        android.util.Log.e("RMBG-MODEL", "超分 zip 解压超限，中止")
+                        android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_13))
                         return@importSuperResModelZip null
                     }
                     val baseName = name.substringAfterLast('/').substringAfterLast('\\')
@@ -412,7 +414,7 @@ object ModelManager {
             // 2) 找主 onnx（第一个 .onnx）
             val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) } ?: emptyArray()
             if (onnxFiles.isEmpty()) {
-                android.util.Log.e("RMBG-MODEL", "超分 zip 内无 .onnx 文件")
+                android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_11))
                 return@importSuperResModelZip null
             }
             val mainOnnx = onnxFiles[0]
@@ -442,7 +444,7 @@ object ModelManager {
 
             if (destOnnx.exists()) destOnnx.absolutePath else null
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "超分 zip 导入失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_12), e)
             null
         } finally {
             try { tmpDir.deleteRecursively() } catch (_: Exception) {}
@@ -589,7 +591,7 @@ object ModelManager {
             ready
         } catch (e: Exception) {
             // 无内置 assets（lite 版）或 assets 缺失/复制失败
-            android.util.Log.w("RMBG-MODEL", "SAM assets 内置复制跳过/失败（lite 或无内置？）", e)
+            android.util.Log.w("RMBG-MODEL", OperitApp.appContext.getString(R.string.sam), e)
             isSamReady()
         }
     }
@@ -646,7 +648,7 @@ object ModelManager {
                 if (needBytes > 0) {
                     val acc = doneBytes + bytesDownloaded
                     Notifications.notifyDownloadProgress(
-                        context, "正在下载 SAM 模型…", acc, needBytes, speedBps
+                        context, OperitApp.appContext.getString(R.string.sam_15), acc, needBytes, speedBps
                     )
                 }
             }
@@ -669,7 +671,7 @@ object ModelManager {
             fun notifyDoneOnce() {
                 if (doneNotified) return
                 doneNotified = true
-                Notifications.notifyDownloadDone(context, "SAM 模型已下载", "点击开始智能选区")
+                Notifications.notifyDownloadDone(context, OperitApp.appContext.getString(R.string.sam_9), OperitApp.appContext.getString(R.string.str_368))
             }
         }
         for ((hfFile, dst, minValid) in files) {
@@ -747,7 +749,7 @@ object ModelManager {
             }
             ok
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "SAM zip 导入失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.sam_2), e)
             false
         } finally {
             try { tmpDir.deleteRecursively() } catch (_: Exception) {}
@@ -846,7 +848,7 @@ object ModelManager {
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "Anime-Seg SoC zip 解压部署失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip), e)
         } finally {
             zipDst.delete()
             try { tmpDir.deleteRecursively() } catch (_: Exception) {}
@@ -910,15 +912,15 @@ object ModelManager {
                 return ModelCompatibility(
                     AccelSupport.QNN_EPCONTEXT,
                     "✅ QNN (EPContext)",
-                    "❌ NNAPI 不适用",
-                    "骁龙 DSP 离线编译产物，最推荐"
+                    OperitApp.appContext.getString(R.string.nnapi_7),
+                    OperitApp.appContext.getString(R.string.dsp)
                 )
             }
             return ModelCompatibility(
                 AccelSupport.QNN_EPCONTEXT,
                 "✅ QNN (EPContext)",
-                "❌ NNAPI 不适用",
-                "EPContext 产物（缺 .bin，需部署）"
+                OperitApp.appContext.getString(R.string.nnapi_7),
+                OperitApp.appContext.getString(R.string.bin)
             )
         }
         val name = file.name.lowercase()
@@ -930,25 +932,25 @@ object ModelManager {
         if (!hasQdq) {
             return ModelCompatibility(
                 AccelSupport.CPU_ONLY,
-                "❌ QNN 不适用",
-                "✅ NNAPI 可尝试",
-                "无量化（FP32/FP16），HTP 仅吃 QDQ 量化模型"
+                OperitApp.appContext.getString(R.string.qnn_24),
+                OperitApp.appContext.getString(R.string.nnapi_6),
+                OperitApp.appContext.getString(R.string.htp_4)
             )
         }
         // 4) QDQ 模型：深扫 HTP 风险算子（不支持就标激进，避免在线编译 abort）
         if (deep && scanForBytes(file, HTP_RISKY_OPS)) {
             return ModelCompatibility(
                 AccelSupport.QNN_RISKY,
-                "⚠️ QNN 有风险",
-                "❌ NNAPI 不适用",
-                "含 HTP 风险算子，在线编译可能失败，建议仅 CPU"
+                OperitApp.appContext.getString(R.string.qnn_18),
+                OperitApp.appContext.getString(R.string.nnapi_7),
+                OperitApp.appContext.getString(R.string.htp_3)
             )
         }
         return ModelCompatibility(
             AccelSupport.QNN_TRY,
-            "⚠️ QNN 可尝试",
-            "❌ NNAPI 不适用",
-            "QDQ 量化模型，QNN 会尝试 HTP，失败自动降级 CPU"
+            OperitApp.appContext.getString(R.string.qnn_17),
+            OperitApp.appContext.getString(R.string.nnapi_7),
+            OperitApp.appContext.getString(R.string.qnn_2)
         )
     }
 
@@ -1332,8 +1334,8 @@ object ModelManager {
 
     /** 镜像源列表：国内优先，官方兜底 */
     val mirrors = listOf(
-        Mirror("hf-mirror.com", "https://hf-mirror.com", "国内 HuggingFace 镜像 · 推荐"),
-        Mirror("huggingface.co", "https://huggingface.co", "官方源 · 备用")
+        Mirror("hf-mirror.com", "https://hf-mirror.com", OperitApp.appContext.getString(R.string.str_173)),
+        Mirror("huggingface.co", "https://huggingface.co", OperitApp.appContext.getString(R.string.str_180))
     )
 
     @Volatile
@@ -1585,7 +1587,7 @@ object ModelManager {
             onnxDst.exists() && binDst.exists() &&
                 onnxDst.length() > 100 && binDst.length() > 1_000_000
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "QNN context 拷贝失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.qnn_9), e)
             false
         }
     }
@@ -1603,7 +1605,7 @@ object ModelManager {
         //   不能直接用 modelFileName()——它基于【全局 selectedModelId】，
         //   当用户当前选中别的高优先级模型（如 QNN）时，modelFileName() 会返回那个模型的部署名，
         //   导致 anime_seg 资产被拷到错误文件名，而 isBuiltinModelDownloaded 却一直查 model_anime_seg.onnx
-        //   → 实际已部署但模型页永远显示"未下载"。
+        //   → 实际已部署但模型页永远显示未下载。
         val dst = File(modelDir(), cpuModelDeployFile(modelId))
         return try {
             modelDir().mkdirs()
@@ -1684,7 +1686,7 @@ object ModelManager {
                 try {
                     // ★ 下载前快速连通性检查：不可达镜像直接跳过
                     if (!quickProbe(mirror.baseUrl)) {
-                        mainHandler.post { listener?.onMirrorError(mirror.name, "网络不可达（预检失败）") }
+                        mainHandler.post { listener?.onMirrorError(mirror.name, OperitApp.appContext.getString(R.string.str_390)) }
                         continue
                     }
                     mainHandler.post { listener?.onMirrorSwitch(idx, mirror.name) }
@@ -1779,7 +1781,7 @@ object ModelManager {
             binDst.exists() && binDst.length() > 1_000_000
         // ★ 双文件模式下载结束：成功弹完成通知，失败取消进度通知
         if (result) {
-            Notifications.notifyDownloadDone(context, "${bm.name} 模型已下载", "点击开始抠图")
+            Notifications.notifyDownloadDone(context, "${bm.name} 模型已下载", OperitApp.appContext.getString(R.string.str_367))
         } else {
             Notifications.cancelDownloadNotification(context)
         }
@@ -1834,7 +1836,7 @@ object ModelManager {
                 listener?.onDone(file)
                 if (!doneNotified) {
                     doneNotified = true
-                    Notifications.notifyDownloadDone(context, "${bm.name} 模型已下载", "点击开始抠图")
+                    Notifications.notifyDownloadDone(context, "${bm.name} 模型已下载", OperitApp.appContext.getString(R.string.str_367))
                 }
             }
             override fun onError(e: Exception) {
@@ -1853,12 +1855,12 @@ object ModelManager {
 
         // ③ 解压部署（zip → bin+onnx → 模型目录，与本地导入同构）
         if (!zipOk || !zipDst.exists()) {
-            mainHandler.post { wrap.onError(RuntimeException("zip 下载失败或文件不存在")) }
+            mainHandler.post { wrap.onError(RuntimeException(OperitApp.appContext.getString(R.string.zip_2))) }
             return@withContext false
         }
         val deployed = deployQnnZip(zipDst, bm, mainHandler)
         if (!deployed) {
-            mainHandler.post { wrap.onError(RuntimeException("zip 解压部署失败（检查包内 onnx/bin 结构）")) }
+            mainHandler.post { wrap.onError(RuntimeException(OperitApp.appContext.getString(R.string.zip_8))) }
             return@withContext false
         }
         // ★ 部署成功后删除下载的 zip 源包（避免残留在模型目录占用空间，与本地导入/SAM 导入一致）
@@ -1893,7 +1895,7 @@ object ModelManager {
                             !name.endsWith(".bin", ignoreCase = true)) continue
                         totalBytes += entry.size
                         if (totalBytes > 4L * 1024 * 1024 * 1024) { // 4GB 上限
-                            android.util.Log.e("RMBG-MODEL", "zip 解压超限，中止")
+                            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_7))
                             return false
                         }
                         val baseName = name.substringAfterLast('/').substringAfterLast('\\')
@@ -1909,7 +1911,7 @@ object ModelManager {
                 val onnxFiles = tmpDir.listFiles { _, n -> n.endsWith(".onnx", ignoreCase = true) }
                     ?: emptyArray()
                 if (onnxFiles.isEmpty()) {
-                    android.util.Log.e("RMBG-MODEL", "zip 内无 .onnx 文件")
+                    android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.zip_3))
                     return false
                 }
                 val wantOnnx = bm.hfFile.substringAfterLast('/').substringAfterLast('\\')
@@ -1959,7 +1961,7 @@ object ModelManager {
                 try { tmpDir.deleteRecursively() } catch (_: Exception) {}
             }
         } catch (e: Exception) {
-            android.util.Log.e("RMBG-MODEL", "QNN zip 部署失败", e)
+            android.util.Log.e("RMBG-MODEL", OperitApp.appContext.getString(R.string.qnn_10), e)
             return false
         }
     }
@@ -2059,7 +2061,7 @@ object ModelManager {
     fun builtinModelStatus(bm: BuiltinModel): BuiltinModelStatus {
         // QNN EPContext：特殊处理（onnx + bin 双文件）
         if (bm.isQnn) {
-            val o = qnnContextFileFor(bm.id) ?: return BuiltinModelStatus(bm, "未知", false, 0L, 1_000_000L, false, "EPContext 配置缺失")
+            val o = qnnContextFileFor(bm.id) ?: return BuiltinModelStatus(bm, OperitApp.appContext.getString(R.string.str_309), false, 0L, 1_000_000L, false, OperitApp.appContext.getString(R.string.str_022))
             val b = qnnContextBinFileFor(bm.id) ?: o
             val ok = o.exists() && o.length() > 100 && b.exists() && b.length() > 1_000_000
             if (ok) {
@@ -2086,16 +2088,16 @@ object ModelManager {
     fun modelStatusReport(): String {
         val sb = StringBuilder()
         val dir = modelDir()
-        sb.append("模型目录: ").append(dir.absolutePath).append('\n')
-        sb.append("目录存在: ").append(dir.exists()).append('\n')
-        sb.append("目录内 .onnx 文件:\n")
+        sb.append(OperitApp.appContext.getString(R.string.str_344)).append(dir.absolutePath).append('\n')
+        sb.append(OperitApp.appContext.getString(R.string.str_377)).append(dir.exists()).append('\n')
+        sb.append(OperitApp.appContext.getString(R.string.onnx_10))
         dir.listFiles()?.filter { it.name.endsWith(".onnx") }?.sortedBy { it.name }?.forEach { f ->
             sb.append("  · ").append(f.name).append(" (").append(f.length() / 1024 / 1024).append("MB)\n")
-        } ?: sb.append("  （无 .onnx 文件）\n")
-        sb.append("内置模型判定:\n")
+        } ?: sb.append(OperitApp.appContext.getString(R.string.onnx))
+        sb.append(OperitApp.appContext.getString(R.string.str_131))
         builtinModels.forEach { bm ->
             val st = builtinModelStatus(bm)
-            val tag = if (st.downloaded) "✅已下载" else "❌未下载"
+            val tag = if (st.downloaded) OperitApp.appContext.getString(R.string.str_099) else OperitApp.appContext.getString(R.string.str_105)
             sb.append("  · ").append(bm.name).append(" [").append(tag).append("] ")
                 .append(st.fileName).append(" → ").append(st.reason).append('\n')
         }
@@ -2188,7 +2190,7 @@ object ModelManager {
             // 取消检查：用户点击取消立即终止，不再重试
             if (cancelRequested) {
                 activeMirrorIndex = -1
-                val cancelErr = CancellationException("下载已取消")
+                val cancelErr = CancellationException(OperitApp.appContext.getString(R.string.str_112))
                 mainHandler.post { listener?.onError(cancelErr) }
                 return@withContext false
             }
@@ -2205,7 +2207,7 @@ object ModelManager {
             // ★ 支持取消：已请求取消则不继续尝试其他镜像
             if (cancelRequested) {
                 activeMirrorIndex = -1
-                val cancelErr = CancellationException("下载已取消")
+                val cancelErr = CancellationException(OperitApp.appContext.getString(R.string.str_112))
                 mainHandler.post { listener?.onError(cancelErr) }
                 return@withContext false
             }
@@ -2396,7 +2398,7 @@ object ModelManager {
                 return@withContext false
             }
             if (totalBytes < 100L) {
-                mainHandler.post { listener?.onError(IllegalStateException("文件过小或无效链接")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_290))) }
                 return@withContext false
             }
 
@@ -2413,7 +2415,7 @@ object ModelManager {
                     selectedModelId = CUSTOM_MODEL_ID
                     mainHandler.post { listener?.onDone(target) }
                 } else {
-                    mainHandler.post { listener?.onError(IllegalStateException("压缩包解压失败（无 .onnx）")) }
+                    mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.onnx_5))) }
                 }
                 return@withContext okZip
             }
@@ -2426,7 +2428,7 @@ object ModelManager {
                 onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
             )
             if (downloadedAll < totalBytes) {
-                mainHandler.post { listener?.onError(IllegalStateException("下载不完整")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_109))) }
                 return@withContext false
             }
             // 合并分块 → 临时完整文件
@@ -2448,7 +2450,7 @@ object ModelManager {
             zipDst.delete()
 
             if (!ok || !target.exists()) {
-                mainHandler.post { listener?.onError(IllegalStateException("模型文件处理失败")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_342))) }
                 return@withContext false
             }
             // ⑥ 切换自定义模型标记，走 CPU 链路
@@ -2520,7 +2522,7 @@ object ModelManager {
                 return@withContext false
             }
             if (totalBytes < 100L) {
-                mainHandler.post { listener?.onError(IllegalStateException("文件过小或无效链接")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_290))) }
                 return@withContext false
             }
 
@@ -2538,7 +2540,7 @@ object ModelManager {
                 onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
             )
             if (downloadedAll < totalBytes) {
-                mainHandler.post { listener?.onError(IllegalStateException("下载不完整")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_109))) }
                 return@withContext false
             }
             // 合并分块 → 临时完整文件
@@ -2560,7 +2562,7 @@ object ModelManager {
             zipDst.delete()
 
             if (!ok || !destFile.exists()) {
-                mainHandler.post { listener?.onError(IllegalStateException("模型文件处理失败")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_342))) }
                 return@withContext false
             }
             mainHandler.post { listener?.onDone(destFile) }
@@ -2909,7 +2911,7 @@ object ModelManager {
                 return@withContext false
             }
             if (totalBytes < 100_000_000L) {
-                mainHandler.post { listener?.onError(IllegalStateException("文件过小或无效链接（需 SD 模型 zip ≥100MB）")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.sd))) }
                 return@withContext false
             }
 
@@ -2927,7 +2929,7 @@ object ModelManager {
                 onProgress = { d, t, sp -> mainHandler.post { listener?.onProgress(d, t, sp) } }
             )
             if (downloadedAll < totalBytes) {
-                mainHandler.post { listener?.onError(IllegalStateException("下载不完整")) }
+                mainHandler.post { listener?.onError(IllegalStateException(OperitApp.appContext.getString(R.string.str_109))) }
                 return@withContext false
             }
             // ⑤ 合并分块 → 最终 zip（zip 原样保存）
