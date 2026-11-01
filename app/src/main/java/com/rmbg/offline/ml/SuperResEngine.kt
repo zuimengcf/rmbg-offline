@@ -218,9 +218,15 @@ class SuperResEngine(
         if (tileMode) {
             // ★ 分块只对大图有意义（单块就装得下的直接走整张，避免额外开销与接缝）；
             //   QNN 固定输入模型切块代价高且几何会失真，也走整张兜底。
+            //   分块输出超 MAX_TILED_OUT_PIXELS 上限时 upscaleTiled 抛 IllegalArgumentException，
+            //   捕获后降级整张路径（整张有降采样保护，内存可控）。
             val tooSmall = src.width <= MAX_INPUT_SIDE && src.height <= MAX_INPUT_SIDE
             if (!tooSmall && fixedInputW <= 0 && fixedInputH <= 0) {
-                return upscaleTiled(src, tileLevel)
+                try {
+                    return upscaleTiled(src, tileLevel)
+                } catch (_: IllegalArgumentException) {
+                    // fall through → 整张路径
+                }
             }
         }
         return upscaleWhole(src)
@@ -266,33 +272,33 @@ class SuperResEngine(
         } else {
             if (w >= h) { cols = 2; rows = 1 } else { cols = 1; rows = 2 }
         }
-        val tileW = maxOf(64, w / cols)
-        val tileH = maxOf(64, h / rows)
+        val tileW = maxOf(64, (w + (cols - 1) * overlap + cols - 1) / cols)
+        val tileH = maxOf(64, (h + (rows - 1) * overlap + rows - 1) / rows)
 
-        // 每块起始坐标（带 overlap 重叠，最后一块贴右/下边缘）
+        // 每块起始坐标（均匀步进 tileW - overlap，最后一块强制贴右/下边缘：
+        // 与抠图 removeBackgroundTiled 同一修复——旧公式 w/cols 会让右/下边缘漏一块 overlap 带）
         val xs = IntArray(cols)
         for (c in 0 until cols) {
             var x = c * (tileW - overlap)
-            if (x + tileW > w) x = w - tileW
+            if (c == cols - 1 || x + tileW > w) x = w - tileW
             xs[c] = x.coerceAtLeast(0)
         }
         val ys = IntArray(rows)
         for (r in 0 until rows) {
             var y = r * (tileH - overlap)
-            if (y + tileH > h) y = h - tileH
+            if (r == rows - 1 || y + tileH > h) y = h - tileH
             ys[r] = y.coerceAtLeast(0)
-        }
-        // 确保相邻块必有 overlap 交集（避免接缝）
-        for (c in 1 until cols) {
-            if (xs[c] <= xs[c - 1]) xs[c] = minOf(xs[c - 1] + tileW - overlap, w - tileW).coerceAtLeast(xs[c - 1])
-        }
-        for (r in 1 until rows) {
-            if (ys[r] <= ys[r - 1]) ys[r] = minOf(ys[r - 1] + tileH - overlap, h - tileH).coerceAtLeast(ys[r - 1])
         }
 
         // 输出尺寸（4x）
         val ow = w * 4
         val oh = h * 4
+        // ★ 内存上限检查：MAX_TILED_OUT_PIXELS 已定义却从未引用（旧代码直接分配，
+        //   2000×1500 4x → 输出 48M px，rgbaFull+weightFull ≈ 960MB → 必 OOM）。
+        //   超限抛异常，调用方（upscale4x 分派器）捕获后降级到整张路径。
+        require(ow.toLong() * oh <= MAX_TILED_OUT_PIXELS) {
+            "Tiled output ${ow}x$oh exceeds MAX_TILED_OUT_PIXELS=$MAX_TILED_OUT_PIXELS"
+        }
         val rgbaFull = FloatArray(ow * oh * 4)   // RGBA 累积（含 alpha 权重，按 4 分量加权）
         val weightFull = FloatArray(ow * oh)     // 权重累积（重叠带 Σwt 可 >1）
 
@@ -313,6 +319,13 @@ class SuperResEngine(
                 val hasL = c > 0; val hasR = c < cols - 1; val hasT = r > 0; val hasB = r < rows - 1
                 val upW = up.width
                 val upH = up.height
+                // ★ 动态 CPU 模型的 upscaleWhole 对 >512px 的 tile 会先降采样再 4x，
+                //   up 实际尺寸 = 降采样尺寸×4 < tw*4×th*4。旧代码按 dy*4+sy / dx*4+sx
+                //   直接索引 → 越界全部 continue → 缺块/透明区域。
+                //   修复：按 up 实际尺寸与块应有尺寸 (tw*4, th*4) 的比例做坐标映射，
+                //   降采样融合会损失该块部分细节（由覆盖同一区域的邻块补偿），但位置正确、不缺块。
+                val scaleX = upW.toFloat() / (tw * 4)
+                val scaleY = upH.toFloat() / (th * 4)
                 val upPx = IntArray(upW * upH)
                 up.getPixels(upPx, 0, upW, 0, 0, upW, upH)
                 up.recycle()
@@ -327,6 +340,9 @@ class SuperResEngine(
                         if (rb < wty) wty = rb
                     }
                     val outY = gy * 4
+                    // 该源像素行对应的 up 中实际行范围（比例映射，向下取整+clamp）
+                    val upY0 = (dy * 4 * scaleY).toInt().coerceIn(0, upH - 1)
+                    val upY1 = ((dy + 1) * 4 * scaleY).toInt().coerceIn(upY0, upH)
                     for (dx in 0 until tw) {
                         val gx = ox + dx
                         var wtx = 1f
@@ -336,19 +352,25 @@ class SuperResEngine(
                             if (rr < wtx) wtx = rr
                         }
                         val wt = minOf(wtx, wty).coerceIn(0f, 1f)
-                        // 该源像素对应的 4x 输出邻域（4×4）：RGBA 与权重同步累加，避免二次子循环错位
+                        // 该源像素对应的 up 实际列范围（比例映射）
+                        val upX0 = (dx * 4 * scaleX).toInt().coerceIn(0, upW - 1)
+                        val upX1 = ((dx + 1) * 4 * scaleX).toInt().coerceIn(upX0, upW)
+                        // 把 up 的 [upX0,upX1)×[upY0,upY1) 邻域采样写入对应 4x 输出邻域
                         for (sy in 0 until 4) {
                             val oy2 = outY + sy
                             if (oy2 >= oh) continue
-                            val upY = dy * 4 + sy
-                            if (upY >= upH) continue
+                            // 在 [upY0, upY1) 内按 sy 均匀取样（区间空时取 upY0）
+                            val upY = if (upY1 > upY0)
+                                upY0 + (upY1 - upY0 - 1) * sy / 3
+                            else upY0
                             val rowO = oy2 * ow
                             val rowU = upY * upW
                             for (sx in 0 until 4) {
                                 val ox2 = gx * 4 + sx
                                 if (ox2 >= ow) continue
-                                val upX = dx * 4 + sx
-                                if (upX >= upW) continue
+                                val upX = if (upX1 > upX0)
+                                    upX0 + (upX1 - upX0 - 1) * sx / 3
+                                else upX0
                                 val srcPx = upPx[rowU + upX]
                                 val a = (srcPx ushr 24) and 0xFF
                                 val r8 = (srcPx shr 16) and 0xFF

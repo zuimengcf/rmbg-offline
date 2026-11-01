@@ -746,36 +746,27 @@ class RmbgOnnxEngine(
         // 总块数（实际有效，供进度用）
         val totalTiles = cols * rows
 
-        // 每块尺寸（含 overlap 的源像素边长，向下取整保证不越界；至少=模型输入 size→可小于 size 但最小 64）
-        val tileW = maxOf(64, (w / cols).coerceAtLeast(size / 2))
-        val tileH = maxOf(64, (h / rows).coerceAtLeast(size / 2))
+        // ★ 每块尺寸：必须保证 (cols-1) 步 × (tileW - overlap) 能带重叠走到右/下边缘，
+        //   即 tileW ≥ ceil((w + (cols-1)*overlap) / cols)。
+        //   旧公式 w/cols（如 1000²、4 块 → tileW=500、步进 436）会让最后一块只到 x=436，
+        //   右缘 [936,1000) 的 64px 无任何块覆盖 → 边缘漏抠。
+        //   保留 ≥ size/2 下限（块过小会被过度放大喂模型）；下限只会加大块尺寸→重叠更多，不破坏覆盖。
+        val tileW = maxOf(64, size / 2, (w + (cols - 1) * overlap + cols - 1) / cols)
+        val tileH = maxOf(64, size / 2, (h + (rows - 1) * overlap + rows - 1) / rows)
 
-        // 每块在原图中的起始位置（带 overlap 重叠，最后一块对齐右/下边缘）
+        // 每块起始位置：均匀步进 tileW - overlap（相邻块恰好重叠 overlap 像素）；
+        // 越界或最后一块回拉对齐右/下边缘（w - tileW ≤ 均匀位置 → 重叠只增不减，右/下边缘必被覆盖）。
         val tileXs = IntArray(cols)
-        val tileYs = IntArray(rows)
-        // 列：step = tileW - overlap，保证相邻块重叠 overlap 像素
         for (c in 0 until cols) {
             var x = c * (tileW - overlap)
-            if (x + tileW > w) x = w - tileW
+            if (c == cols - 1 || x + tileW > w) x = w - tileW
             tileXs[c] = x.coerceAtLeast(0)
         }
+        val tileYs = IntArray(rows)
         for (r in 0 until rows) {
             var y = r * (tileH - overlap)
-            if (y + tileH > h) y = h - tileH
+            if (r == rows - 1 || y + tileH > h) y = h - tileH
             tileYs[r] = y.coerceAtLeast(0)
-        }
-        // 最后一块若与倒数第二块无重叠（图极小且块数多），强制对齐回有重叠的位置：
-        // 确保相邻块必有 overlap 交集（避免接缝）
-        for (c in 1 until cols) {
-            if (tileXs[c] < tileXs[c - 1] + size - overlap) {
-                // 保证重叠带存在
-                if (tileXs[c] <= tileXs[c - 1]) tileXs[c] = minOf(tileXs[c - 1] + size - overlap, w - size).coerceAtLeast(tileXs[c - 1])
-            }
-        }
-        for (r in 1 until rows) {
-            if (tileYs[r] < tileYs[r - 1] + size - overlap) {
-                if (tileYs[r] <= tileYs[r - 1]) tileYs[r] = minOf(tileYs[r - 1] + size - overlap, h - size).coerceAtLeast(tileYs[r - 1])
-            }
         }
 
         // 全尺寸 alpha 累积（FloatArray：加权累计）
