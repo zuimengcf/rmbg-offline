@@ -65,7 +65,14 @@ object ModelManager {
         val hfBinFile: String? = null,      // HF 仓库内 bin 路径（双轨下载用；null=由 hfFile 同目录推断）
         val hfZip: String? = null,          // ★ HF 仓库内 zip 路径（内含 bin+onnx；设置后云下载改为整包 zip 下载→解压部署，本地 zip 导入同样适用）
         val deployOnnxName: String? = null, // 部署到模型目录后的 onnx 文件名（null=用 asset 文件名）
-        val deployBinName: String? = null   // 部署到模型目录后的 bin 文件名（★必须与 onnx 内 ep_cache_context 引用一致）
+        val deployBinName: String? = null,  // 部署到模型目录后的 bin 文件名（★必须与 onnx 内 ep_cache_context 引用一致）
+        // ★ 预处理归一化模式：NONE=仅 /255（默认，u2netp/u2net/rmbg/anime_seg/InSPyReNet）；
+        //   IMAGENET=/255 后减 ImageNet mean/std 除 std（PP-HumanSeg 必须，实测 fg 27%→30%）
+        val normalizeMode: RmbgOnnxEngine.NormalizeMode = RmbgOnnxEngine.NormalizeMode.NONE,
+        // ★ 是否允许 NNAPI 硬件加速（默认 true）。PP-HumanSeg 等特定模型在 NNAPI EP
+        //   createSession 编译图时触发 ORT 原生 SIGABRT（native abort，无法被 Java catch，
+        //   连「失败降级 CPU」都救不了），故必须置 false 强制纯 CPU 加载。
+        val nnapiOk: Boolean = true
     ) {
         val isQnn: Boolean get() = kind == ModelKind.QNN
         val hasDirectUrl: Boolean get() = !directUrl.isNullOrBlank()
@@ -98,15 +105,41 @@ object ModelManager {
             description = OperitApp.appContext.getString(R.string.str_115)
         ),
         BuiltinModel(
+            id = "u2netp",
+            name = "U2NetP",
+            hfRepo = "danielgatis/rembg",
+            hfFile = "u2netp.onnx",
+            sizeBytes = 4_574_861L,
+            description = OperitApp.appContext.getString(R.string.str_322),
+            // ★ 内置轻量模型：U2NetP（4.6MB）打包在 APK assets（models/u2netp.onnx），免下载离线可用。
+            //   来源：xuebinqin/U-2-Net (Apache-2.0) → danielgatis/rembg 转 ONNX，固定输入 1×3×320×320，
+            //   输出 [0,1] 概率（Sigmoid 已烘进模型），引擎现有 preprocess/postprocess 直接兼容。
+            assetPath = "models/u2netp.onnx"
+        ),
+        BuiltinModel(
+            id = "pphumanseg",
+            name = "PP-HumanSeg",
+            hfRepo = "opencv/human_segmentation_pphumanseg",
+            hfFile = "human_segmentation_pphumanseg_2023mar.onnx",
+            sizeBytes = 6_163_938L,
+            description = OperitApp.appContext.getString(R.string.rmbg_7),
+            // ★ 内置人像极速档：PP-HumanSeg 2023mar（6.2MB）打包在 APK assets，免下载离线可用。
+            //   来源：PaddleSeg → OpenCV Zoo 转 ONNX，固定输入 1×3×192×192，
+            //   输出 [1,2,192,192] 双通道 softmax（通道1=前景），需 ImageNet 归一化。
+            //   实测 12.9ms（比 u2netp 快 31 倍），fg 占比与 u2netp 高度吻合。
+            assetPath = "models/pphumanseg.onnx",
+            normalizeMode = RmbgOnnxEngine.NormalizeMode.IMAGENET,
+            nnapiOk = false   // ★ PP-HumanSeg 在 NNAPI EP createSession 时原生 abort，须强制纯 CPU
+        ),
+        BuiltinModel(
             id = "anime_seg",
             name = "Anime-Seg",
             hfRepo = "skytnt/anime-seg",
             hfFile = "isnetis.onnx",
             sizeBytes = 176_069_933L,
-            description = OperitApp.appContext.getString(R.string.str_153),
-            // ★ 内置默认模型：CPU 版 animeseg 打包在 APK assets（models/anime_seg.onnx，176MB），
-            //   离线可用、免下载，作为完整版默认抠图模型。
-            assetPath = "models/anime_seg.onnx"
+            description = OperitApp.appContext.getString(R.string.str_153)
+            // ★ 已改为云下载（HF skytnt/anime-seg）：不再打包 assets，省 176MB APK 体积。
+            //   首次选用时在模型页联网下载，下载后离线可用。
         ),
         // ★ 量化直链模型（GitHub/HF 直链，不走镜像循环）
         BuiltinModel(
@@ -126,6 +159,27 @@ object ModelManager {
             directUrl = "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model_quantized.onnx?download=true",
             sizeBytes = 44_403_226L,
             description = OperitApp.appContext.getString(R.string.rmbg_5)
+        ),
+        BuiltinModel(
+            id = "u2net",
+            name = "U²-Net",
+            hfRepo = "danielgatis/rembg",
+            hfFile = "u2net.onnx",
+            // ★ 官方源：danielgatis/rembg releases v0.0.0（与 u2netp 同源同策）
+            directUrl = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
+            sizeBytes = 175_997_641L,
+            description = OperitApp.appContext.getString(R.string.rmbg_8)
+        ),
+        BuiltinModel(
+            id = "inspyrenet",
+            name = "InSPyReNet",
+            hfRepo = "OS-Software/InSPyReNet-SwinB-Plus-Ultra-ONNX",
+            hfFile = "onnx/model_fp16.onnx",
+            // ★ 官方 ONNX 转换源：OS-Software (MIT)，sha256 与 ImageToolbox 收录一致
+            directUrl = "https://huggingface.co/OS-Software/InSPyReNet-SwinB-Plus-Ultra-ONNX/resolve/main/onnx/model_fp16.onnx",
+            sizeBytes = 199_133_027L,
+            description = OperitApp.appContext.getString(R.string.rmbg_9),
+            normalizeMode = RmbgOnnxEngine.NormalizeMode.IMAGENET
         )
     )
 
@@ -191,11 +245,16 @@ object ModelManager {
      *    其余 CPU 模型（rmbg14_fp32/rmbg20/modnet）本来就是 HF 云下载，不内置也能用，
      *    但为贴合「只内置 anime」策略，Lite 下直接隐藏这些 CPU 模型列表项 */
     val builtinModels: List<BuiltinModel> = if (BuildConfig.IS_LITE) {
-        // ★ Lite 精简版：anime_seg【不内置】（无 assetPath → 走 HF 云下载），
-        //   精简 APK 体积（省 176MB）；其余三个 QNN（onnx 头内置、bin 云下载）。
-        val animeSegLite = cpuModels.find { it.id == "anime_seg" }!!.copy(assetPath = null)
+        // ★ Lite 精简版：U2NetP + PP-HumanSeg 内置（assets 免下载），anime_seg 改为云下载（省 176MB），
+        //   三个 QNN（onnx 内置、bin 云下载）。
         listOf(
-            animeSegLite,
+            // ★ lite 内置 U2NetP（4.6MB assets 免下载）：轻量档默认模型，离线秒抠
+            cpuModels.find { it.id == "u2netp" }!!,
+            // ★ lite 内置 PP-HumanSeg（6.2MB assets 免下载）：人像极速档，192² 输入，
+            //   比 u2netp 快 31 倍，fg 占比高度吻合。需 ImageNet 归一化 + 双通道输出适配
+            cpuModels.find { it.id == "pphumanseg" }!!,
+            // ★ anime_seg 改为云下载（176MB 太大不内置，首次选用时在模型页下载）
+            cpuModels.find { it.id == "anime_seg" }!!,
             qnnModels.find { it.id == "qnn_rmbg14_v2" }!!,
             qnnModels.find { it.id == "qnn_animeseg" }!!,
             qnnModels.find { it.id == "qnn_modnet" }!!
@@ -1455,10 +1514,13 @@ object ModelManager {
      *   否则默认选中内置 CPU 版 animeseg（离线可用，免下载）。
      */
     fun autoPickDefaultModel(context: Context): String {
-        // ★ 默认始终选内置 CPU 版 animeseg（assets 离线部署，免下载）——
-        //   不自动选 QNN 模型，避免启动即触发 QNN bin 的 HF 联网下载（用户明确要求 QNN 不要自动下载）。
-        //   用户若想用 QNN，在模型页手动选择对应 QNN 模型即可（届时才会走部署/下载链路）。
-        return builtinModels.find { it.id == "anime_seg" }?.id ?: "anime_seg"
+        // ★ lite：默认选内置 U2NetP（4.6MB assets 免下载、320² 轻量秒抠）——开箱即用零等待
+        if (BuildConfig.IS_LITE) {
+            return builtinModels.find { it.id == "u2netp" }?.id ?: "u2netp"
+        }
+        // ★ normal：anime_seg 已改为云下载，默认选内置 U2NetP（4.6MB assets 免下载、开箱即用）。
+        //   用户想用 anime_seg 时在模型页手动下载即可。
+        return builtinModels.find { it.id == "u2netp" }?.id ?: "u2netp"
     }
 
     /** QNN 可用且当前设备匹配该模型 → 应默认开 QNN 加速 */
@@ -2026,6 +2088,9 @@ object ModelManager {
             val b = qnnContextBinFileFor(bm.id) ?: return false
             return o.exists() && o.length() > 100 && b.exists() && b.length() > 1_000_000
         }
+        // ★ 内置 assets 模型（u2netp/pphumanseg 等，assetPath 非空）已随 APK 打包，
+        //   离线即用，无需下载 → 直接视为「已下载/已就绪」。打开模型页即显示 ✅ 已下载。
+        if (bm.assetPath != null) return true
         val f = File(modelDir(), "model_${bm.id}.onnx")
         return f.exists() && f.length() > maxOf(1_000_000L, bm.sizeBytes / 20)
     }

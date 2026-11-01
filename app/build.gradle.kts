@@ -31,8 +31,8 @@ android {
         applicationId = "com.rmbg.offline"
         minSdk = 27
         targetSdk = 35
-        versionCode = 44
-        versionName = "1.3.0"
+        versionCode = 45
+        versionName = "1.4.0"
 
         // ★ 是否为 Lite 精简版（包名 com.rmbg.offline.lite，模型不内置、走 HF 云下载）
         buildConfigField("boolean", "IS_LITE", "false")
@@ -49,15 +49,15 @@ android {
         create("normal") {
             dimension = "edition"
             applicationId = "com.rmbg.offline"
-            versionCode = 44
-            versionName = "1.3.0"
+            versionCode = 45
+            versionName = "1.4.0"
             buildConfigField("boolean", "IS_LITE", "false")
         }
         create("lite") {
             dimension = "edition"
             applicationId = "com.rmbg.offline.lite"
-            versionCode = 44
-            versionName = "1.3.0"
+            versionCode = 45
+            versionName = "1.4.0"
             buildConfigField("boolean", "IS_LITE", "true")
         }
     }
@@ -284,7 +284,7 @@ tasks.register("downloadQnnBins") {
 //   SAM CPU 分割模型仍按需在构建期下载内置。
 tasks.configureEach {
     if (name == "preBuild") {
-        dependsOn("downloadAnimeSeg")
+        // ★ anime_seg 已改为运行时云下载，不再构建期下载内置（省 176MB APK 体积）
         dependsOn("downloadSamModels")
     }
 }

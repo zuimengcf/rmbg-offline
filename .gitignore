@@ -38,3 +38,6 @@ lineage.bin
 
 # 上传辅助脚本（含 token，勿提交）
 push_api.py
+
+# ★ 本地审阅临时产物（GitHub Actions artifact 解包/解压缓存，1.3GB，不入库）
+tmp_review/

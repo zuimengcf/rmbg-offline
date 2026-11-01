@@ -55,6 +55,9 @@
     <string name="rmbg_4">RMBG-1.4 量化</string>
     <string name="rmbg_5">RMBG-1.4 量化 · 42MB · HF 直链</string>
     <string name="rmbg_6">RMBG-2.0 量化</string>
+    <string name="rmbg_7">PP-HumanSeg · 6.2MB 免下载内置 · 192² 极速人像（PaddleSeg/MIT）</string>
+    <string name="rmbg_8">U²-Net · 176MB · 320² 通用抠图（原版 Apache-2.0）</string>
+    <string name="rmbg_9">InSPyReNet · 199MB · 1024² 质量天花板（SwinB MIT）</string>
     <string name="str_055">Real-ESRGAN · SM8350~SM8850 多型号 · 28-30MB（512→2048）</string>
     <string name="sam">SAM assets 内置复制跳过/失败（lite 或无内置？）</string>
     <string name="sam_2">SAM zip 导入失败</string>
@@ -321,6 +324,7 @@
     <string name="str_318">极速</string>
     <string name="str_319">极速模式</string>
     <string name="str_320">极速模式已关闭</string>
+    <string name="str_322">U²-Net 轻量版 · 4.6MB 免下载内置 · 320² 秒抠（原版 Apache-2.0）</string>
     <string name="str_321">极速模式已开启（缩分辨率加速）</string>
     <string name="ai_11">查看器点「AI 重绘」即按此预设一键修复微调（img2img，非生图）：自动部署启动引擎→重绘→完成自动停止。</string>
     <string name="str_323">标记（meta + 内存缓存），UI 恢复</string>
@@ -461,4 +465,6 @@
     <string name="str_458">默认 0.45：仅修复模糊/噪点/伪影，保持原图结构。想大幅重绘可调高到 0.7+。</string>
     <string name="qnn_38">（含 QNN bin）</string>
     <string name="cpu_10">🧠 CPU 模型（普通 ONNX · CPU/NNAPI 加速）</string>
+    <string name="tile_level_label">分块档位</string>
+    <string name="turbo_level_label">极速档位</string>
 </resources>

@@ -29,7 +29,8 @@ class RmbgOnnxEngine(
     private val enableNnapi: Boolean = false,
     private val enableQnn: Boolean = false,
     private val threads: Int = 4,
-    private val nativeLibDir: String? = null
+    private val nativeLibDir: String? = null,
+    private val normalizeMode: NormalizeMode = NormalizeMode.NONE
 ) {
 
     /** 当前绑定的模型文件绝对路径（供上层判断是否需要重建引擎） */
@@ -67,7 +68,13 @@ class RmbgOnnxEngine(
     private var env: OrtEnvironment? = null
     private var session: OrtSession? = null
 
-    /** 是否正在推理（runRmbg 设置，供 onStop 判断能否立即释放引擎） */
+    /** 最近一次推理的输出异常提示（正常为 null；每次 removeBackground 开始时清空）。
+     *  仅提示不自动处理：用户可自行决定是否在设置中关闭 NNAPI 重试。 */
+    @Volatile
+    var lastRunWarning: String? = null
+        private set
+
+    /** 输入是否正在推理（runRmbg 设置，供 onStop 判断能否立即释放引擎） */
     @Volatile
     var isRunning: Boolean = false
 
@@ -87,7 +94,31 @@ class RmbgOnnxEngine(
      *  人物内部(logits 小正)被压到阈值下抠空成"线条画"。对 rmbg14_sdk250 应用 sigmoid。 */
     private var sigmoidOutput: Boolean = false
 
+    /** 输出通道数（从模型输出 shape 读取）：
+     *  1 = 单通道前景概率图（u2netp/u2net/rmbg/anime_seg/InSPyReNet）；
+     *  2 = 双通道 softmax（PP-HumanSeg [1,2,H,W]，通道1=前景概率）。
+     *  load() 时自动检测，extractOutputProbs 据此取正确通道。 */
+    private var outputChannels: Int = 1
+
+    /** ★ 直拉伸模式：跳过 letterbox，把输入直接拉伸到 inputSize×inputSize 再推理。
+     *  背景：u2netp 等固定方形小输入模型训练时就是全图直拉伸，letterbox 的填充边
+     *  （白/黑）对它是分布外输入，会扭曲模型对内容区的整体判断
+     *  （Linux 实测：白底 letterbox 与直拉伸的 IoU 仅 0.453，前景占比虚高 40.2% vs 31.6%）。
+     *  load() 时自动判定：固定方形输入（shape[2]==shape[3]>0）且边长≤512 的模型启用；
+     *  大模型（rmbg-14 1024² 等）与动态 shape 模型不启用，行为与旧版完全一致。 */
+    @Volatile
+    var stretchMode: Boolean = false
+        private set
+
     private enum class InputLayout { NHWC, NCHW }
+
+    /** 预处理归一化模式：
+     *  NONE = 仅 /255（u2netp/u2net/anime_seg/rmbg 系，模型内部已含归一化或训练时用纯 /255）；
+     *  IMAGENET = /255 后减均值除标准差（ImageNet mean/std，PP-HumanSeg/InSPyReNet 等）。
+     *  rembg 源码证实 u2net/u2netp 用 ImageNet mean/std，但模型内部已含归一化层，
+     *  rembg 的 normalize 是外部做的——实测 u2netp 在 App 现有纯 /255 下结果正确（与 PIL 基线 fg 一致），
+     *  说明该 ONNX 导出已把 mean/std 烘进模型。PP-HumanSeg 则必须外部做（实测 fg 27.3% vs 29.6%）。 */
+    enum class NormalizeMode { NONE, IMAGENET }
 
     // ---- 复用缓冲（降低峰值内存）----
     private var reuseTile: Bitmap? = null
@@ -411,6 +442,40 @@ class RmbgOnnxEngine(
         bgrInput = false
         sigmoidOutput = false
 
+        // ★ 直拉伸模式自动判定：固定方形输入 + 小边长（≤512）→ 该类小模型（u2netp 320²）
+        //   训练时全图直拉伸，letterbox 填充边是分布外输入会扭曲结果（实测 IoU 0.45）；
+        //   动态 shape（-1）或大模型（1024²）不启用，保持旧 letterbox 行为。
+        stretchMode = false
+        run {
+            val shp = (finalSession.inputInfo[inputName]?.info as? ai.onnxruntime.TensorInfo)?.shape
+            if (shp != null && shp.size == 4 && inputLayout == InputLayout.NCHW) {
+                val d2 = shp.getOrNull(2) ?: 0L
+                val d3 = shp.getOrNull(3) ?: 0L
+                if (d2 > 0 && d2 == d3 && inputSize <= 512) {
+                    stretchMode = true
+                    android.util.Log.i("RMBG-ENGINE", "stretchMode=ON (固定方形小输入 ${d2}x${d3}，跳过 letterbox 直拉伸)")
+                }
+            }
+        }
+        dbg("stretchMode=$stretchMode (inputSize=$inputSize, layout=$inputLayout)")
+
+        // ★ 输出通道数自动检测：从第一个输出的 shape 读取通道维度。
+        //   [1,1,H,W] → 单通道（u2netp/u2net/rmbg/InSPyReNet）；
+        //   [1,2,H,W] → 双通道 softmax（PP-HumanSeg，通道1=前景概率）。
+        outputChannels = 1
+        try {
+            val outInfo = finalSession.outputInfo.values.firstOrNull()?.info
+            val outShape = (outInfo as? ai.onnxruntime.TensorInfo)?.shape
+            if (outShape != null && outShape.size >= 4) {
+                val ch = outShape[1]
+                if (ch == 2L) {
+                    outputChannels = 2
+                    android.util.Log.i("RMBG-ENGINE", "outputChannels=2 (双通道 softmax，取通道1=前景)")
+                }
+            }
+        } catch (_: Exception) {}
+        dbg("outputChannels=$outputChannels (normalizeMode=$normalizeMode)")
+
         // ★ 预热（对齐 Kortex 首次推理流畅）：创建 session 后立刻用空白输入跑一次推理，
         //   把 QNN HTP 权重加载/图编译/算子初始化开销前移到模型加载阶段（此时通常有进度提示），
         //   避免用户点"抠图"后才卡那几百 ms。失败静默，不影响主流程。
@@ -452,12 +517,14 @@ class RmbgOnnxEngine(
      * @param input 原始图片（任意尺寸）
      * @param threshold 前景阈值 0~1（默认 0.5，越低保留越多边缘）
      * @param tileMode 拆分抠图模式：true=大图分块推理保留细节，false=整体缩放到 inputSize
+     * @param tileCount 分块档位（2/4/9/16）：目标分块总数；仅 tileMode=true 时生效，默认 4（2×2）
      * @return 透明背景 PNG Bitmap（与原图同尺寸）
      */
     fun removeBackground(
         input: Bitmap,
         threshold: Float = 0.5f,
         tileMode: Boolean = false,
+        tileCount: Int = 4,
         onProgress: ((Int, Int) -> Unit)? = null
     ): Bitmap {
         // ★ 运行锁：标记本次推理进行中（供 onStop 判断延迟 close，避免 native session 被释放后仍被调用闪退）
@@ -502,7 +569,7 @@ class RmbgOnnxEngine(
         val result = if (!tileMode) {
             removeBackgroundSingle(work, threshold)
         } else {
-            removeBackgroundTiled(work, threshold, onProgress)
+            removeBackgroundTiled(work, threshold, tileCount, onProgress)
         }
 
         // 若发生过尺寸调整（放大或缩小），把透明结果恢复回原图尺寸
@@ -532,21 +599,44 @@ class RmbgOnnxEngine(
         // ★ 停止检查：整体推理无法中断 native run，但至少在预处理前快速响应取消
         if (cancelFlag) throw java.util.concurrent.CancellationException(OperitApp.appContext.getString(R.string.str_273))
 
-        // ---- 预处理：等比 letterbox 到 inputSize×inputSize（居中、白底填充），内容不变形 ----
+        // ---- 预处理 ----
+        // 旧路径：等比 letterbox 到 inputSize×inputSize（居中、白底填充），内容不变形。
+        // ★ stretchMode（直拉伸）路径：固定方形小模型（u2netp 320²）训练时就是全图直拉伸，
+        //   letterbox 填充边是分布外输入，会扭曲模型对内容区的整体判断（实测 IoU 仅 0.45），
+        //   故直接双线性拉伸到 inputSize²（对齐 ImageToolbox 对 u2netp 的 Aire.scale 用法），
+        //   后处理按全幅映射（content=0,0,size,size）。
         val size = inputSize
-        val scale = minOf(size.toFloat() / input.width, size.toFloat() / input.height)
-        val contentW = maxOf(1, (input.width * scale).toInt())
-        val contentH = maxOf(1, (input.height * scale).toInt())
-        val padL = (size - contentW) / 2
-        val padT = (size - contentH) / 2
-        val square = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val cv = android.graphics.Canvas(square)
-        cv.drawColor(android.graphics.Color.WHITE) // 白底
-        val scaled = Bitmap.createScaledBitmap(input, contentW, contentH, true)
-        cv.drawBitmap(scaled, padL.toFloat(), padT.toFloat(), null)
-        scaled.recycle()
+        val square: Bitmap
+        val padL: Int
+        val padT: Int
+        val contentW: Int
+        val contentH: Int
+        if (stretchMode) {
+            // ★ 抗混叠面积均值降采样：createScaledBitmap 缩小时不展宽滤波核（2-tap 无 AA），
+            //   1672→320 这类大比例缩小会把高频细节混叠成伪信号（实测前景置信 31.6%→19.5%）。
+            //   改用 box(area) 均值：每输出像素=源区域真实平均，Linux 验证前景占比恢复至 29.5%。
+            square = boxDownscale(input, size, size)
+            padL = 0; padT = 0; contentW = size; contentH = size
+        } else {
+            val scale = minOf(size.toFloat() / input.width, size.toFloat() / input.height)
+            val cw = maxOf(1, (input.width * scale).toInt())
+            val ch = maxOf(1, (input.height * scale).toInt())
+            padL = (size - cw) / 2
+            padT = (size - ch) / 2
+            contentW = cw
+            contentH = ch
+            val sq = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val cv = android.graphics.Canvas(sq)
+            cv.drawColor(android.graphics.Color.WHITE) // 白底
+            val scaled = Bitmap.createScaledBitmap(input, contentW, contentH, true)
+            cv.drawBitmap(scaled, padL.toFloat(), padT.toFloat(), null)
+            scaled.recycle()
+            square = sq
+        }
         val tensorData = preprocess(square)
-        square.recycle()
+        // ★ createScaledBitmap 在目标尺寸==源尺寸时可能直接返回原引用（Android 框架优化），
+        //   stretch 分支存在该情况，回收前必须判引用，避免把 input 一并回收导致后处理读已销毁位图
+        if (square !== input) { try { square.recycle() } catch (_: Exception) {} }
 
         // ---- 推理 ----
         val shape = if (inputLayout == InputLayout.NHWC)
@@ -571,13 +661,65 @@ class RmbgOnnxEngine(
     }
 
     /**
-     * 拆分抠图：大图切成多个 inputSize×inputSize 块分别推理（串行，控制内存），
+     * 抗混叠面积均值降采样（box / area average）。
+     * 背景：Bitmap.createScaledBitmap(filter=true) 缩小时用固定 2-tap 双线性、
+     * 滤波核不随缩放比展宽（无抗混叠），大比例缩小（如 1672→320，每步跨 5.2 源像素）
+     * 会把高频细节混叠成伪信号，实测让 u2netp 前景置信占比从 31.6% 掉到 19.5%。
+     * 本实现：每个输出像素 = 源图对应矩形区域的精确平均，天然完美抗混叠；
+     * 等尺寸时返回原引用（与既有 square !== input 回收保护兼容）。
+     */
+    private fun boxDownscale(src: Bitmap, dw: Int, dh: Int): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w == dw && h == dh) return src
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val out = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888)
+        val op = IntArray(dw * dh)
+        for (dy in 0 until dh) {
+            val y0 = dy * h / dh
+            val y1 = maxOf((dy + 1) * h / dh, y0 + 1)
+            for (dx in 0 until dw) {
+                val x0 = dx * w / dw
+                val x1 = maxOf((dx + 1) * w / dw, x0 + 1)
+                var sa = 0L; var sr = 0L; var sg = 0L; var sb = 0L
+                var cnt = 0
+                var y = y0
+                while (y < y1) {
+                    var idx = y * w + x0
+                    val end = y * w + x1
+                    while (idx < end) {
+                        val p = px[idx]
+                        sr += (p shr 16) and 0xFF
+                        sg += (p shr 8) and 0xFF
+                        sb += p and 0xFF
+                        sa += (p ushr 24) and 0xFF
+                        cnt++
+                        idx++
+                    }
+                    y++
+                }
+                val a8 = (sa / cnt).toInt()
+                val r8 = (sr / cnt).toInt()
+                val g8 = (sg / cnt).toInt()
+                val b8 = (sb / cnt).toInt()
+                op[dy * dw + dx] = (a8 shl 24) or (r8 shl 16) or (g8 shl 8) or b8
+            }
+        }
+        out.setPixels(op, 0, dw, 0, 0, dw, dh)
+        return out
+    }
+
+    /**
+     * 拆分抠图：大图切成多个块分别推理（串行，控制内存），
      * 边缘重叠 OVERLAP 像素做线性渐变融合，再拼回原尺寸。
      * 相比整体缩放，能保留更多细节、更精确的边缘。
      *
+     * @param tileCount 目标分块总数（2/4/9/16）：按图片纵横比分配到行列，
+     *                  每块边长 = ceil(对应边 / 该边块数)。
      * @param onProgress 进度回调 (已完成块数, 总块数)，在调用线程执行
      */
-    private fun removeBackgroundTiled(input: Bitmap, threshold: Float, onProgress: ((Int, Int) -> Unit)? = null): Bitmap {
+    private fun removeBackgroundTiled(input: Bitmap, threshold: Float, tileCount: Int, onProgress: ((Int, Int) -> Unit)? = null): Bitmap {
         val s = session ?: throw IllegalStateException("Model not loaded")
         val e = env ?: throw IllegalStateException("Env not loaded")
         val size = inputSize
@@ -586,37 +728,71 @@ class RmbgOnnxEngine(
         val h = input.height
         cancelFlag = false // 重置取消标志（本次分块推理可被 cancelCurrentRun 打断）
 
-        // 计算分块网格
-        val cols = ((w - 1) / (size - overlap) + 1).coerceAtLeast(1)
-        val rows = ((h - 1) / (size - overlap) + 1).coerceAtLeast(1)
+        // ★ 由目标分块总数推导行列网格（按纵横比分配，块尽量接近方形）
+        //   需要求 (cols, rows) 满足 cols*rows ≈ tileCount 且 cols/rows 接近 w/h。
+        //   对可开方的档位（4→2×2，9→3×3，16→4×4）直接取等差数列；
+        //   对 2（质数）按纵横比把长边分 2 块、短边 1 块。
+        val root = kotlin.math.sqrt(tileCount.toDouble()).toInt()
+        val cols: Int
+        val rows: Int
+        if (root * root == tileCount) {
+            // 完全平方：4/9/16 → 方形网格（按图片长边方向调整方位，保持块接近方形）
+            if (w >= h) { cols = root; rows = root } else { cols = root; rows = root }
+        } else {
+            // 2 → 长边分 2 块，短边 1 块；极端长条时也按长边优先
+            if (w >= h) { cols = 2; rows = 1 } else { cols = 1; rows = 2 }
+        }
 
-        // 每块在原图中的起始位置
+        // 总块数（实际有效，供进度用）
+        val totalTiles = cols * rows
+
+        // 每块尺寸（含 overlap 的源像素边长，向下取整保证不越界；至少=模型输入 size→可小于 size 但最小 64）
+        val tileW = maxOf(64, (w / cols).coerceAtLeast(size / 2))
+        val tileH = maxOf(64, (h / rows).coerceAtLeast(size / 2))
+
+        // 每块在原图中的起始位置（带 overlap 重叠，最后一块对齐右/下边缘）
         val tileXs = IntArray(cols)
         val tileYs = IntArray(rows)
+        // 列：step = tileW - overlap，保证相邻块重叠 overlap 像素
         for (c in 0 until cols) {
-            val x = c * (size - overlap)
-            tileXs[c] = if (x + size > w) w - size else x
-            tileXs[c] = tileXs[c].coerceAtLeast(0)
+            var x = c * (tileW - overlap)
+            if (x + tileW > w) x = w - tileW
+            tileXs[c] = x.coerceAtLeast(0)
         }
         for (r in 0 until rows) {
-            val y = r * (size - overlap)
-            tileYs[r] = if (y + size > h) h - size else y
-            tileYs[r] = tileYs[r].coerceAtLeast(0)
+            var y = r * (tileH - overlap)
+            if (y + tileH > h) y = h - tileH
+            tileYs[r] = y.coerceAtLeast(0)
+        }
+        // 最后一块若与倒数第二块无重叠（图极小且块数多），强制对齐回有重叠的位置：
+        // 确保相邻块必有 overlap 交集（避免接缝）
+        for (c in 1 until cols) {
+            if (tileXs[c] < tileXs[c - 1] + size - overlap) {
+                // 保证重叠带存在
+                if (tileXs[c] <= tileXs[c - 1]) tileXs[c] = minOf(tileXs[c - 1] + size - overlap, w - size).coerceAtLeast(tileXs[c - 1])
+            }
+        }
+        for (r in 1 until rows) {
+            if (tileYs[r] < tileYs[r - 1] + size - overlap) {
+                if (tileYs[r] <= tileYs[r - 1]) tileYs[r] = minOf(tileYs[r - 1] + size - overlap, h - size).coerceAtLeast(tileYs[r - 1])
+            }
         }
 
         // 全尺寸 alpha 累积（FloatArray：加权累计）
         // ★ 修复缝隙：旧版 alpha 按 p·wt 加权、weight 却恒定 +1，归一化 alpha/count 把
         //   重叠区削成一半 → 接缝变暗/透明。这里 weight 累计 wt，归一化 alpha/Σwt；
         //   重叠区两侧 wt 之和 = 1，得到真实加权均值 → 无缝融合。
-        // ★ 内存优化：alpha 用 FloatArray；weight 用 ByteArray（权重归一化到 0..255 存储），
-        //   峰值从 w*h*8B 降到 w*h*5B（4000×3000：96MB→60MB）。
+        // ★ 权重用 FloatArray（而非 ByteArray）：
+        //   ByteArray 0..255 表示 0..1，但分块重叠区 Σwt 实际会叠加到 2~4（多块覆盖同一像素），
+        //   累加到 255 后饱和到 1.0 → 归一化分母失真 → 重叠区 alpha 被错误放大（实测恒定 p=0.8
+        //   的图，ByteArray 下 51% 像素 alpha 偏到 0.95+；float 下仅 0.6%）。
+        //   FloatArray 精确累计 Σwt，无饱和失真。内存：w*h*8B（16M px 峰值 128MB，与设计一致）。
         val alphaFull = FloatArray(w * h)
-        val weightFull = ByteArray(w * h)
+        val weightFull = FloatArray(w * h)
 
-        val totalTiles = cols * rows
         var doneTiles = 0
 
-        // 复用裁剪位图（避免每块 new Bitmap，显著降内存）
+        // 复用裁剪位图（模型输入尺寸 size×size，避免每块 new Bitmap，显著降内存）
         val tile = reuseTile ?: Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { reuseTile = it }
 
         // 逐块推理（串行，防内存爆）
@@ -626,10 +802,14 @@ class RmbgOnnxEngine(
                 if (cancelFlag) break
                 val ox = tileXs[c]
                 val oy = tileYs[r]
+                // 块在源图中的实际覆盖范围（最后一块贴右/下边缘，可能略小于 tileW/tileH）
+                val tw = minOf(tileW, w - ox).coerceAtLeast(1)
+                val th = minOf(tileH, h - oy).coerceAtLeast(1)
 
-                // 裁剪块（复用 tile 位图）
+                // 把源图 [ox, ox+tileW)×[oy, oy+tileH) 区域等比缩放绘制进 size×size 的 tile（单次 scale+crop）
                 val canvas = android.graphics.Canvas(tile)
-                canvas.drawBitmap(input, -ox.toFloat(), -oy.toFloat(), null)
+                val srcRect = android.graphics.Rect(ox, oy, minOf(ox + tileW, w), minOf(oy + tileH, h))
+                canvas.drawBitmap(input, srcRect, android.graphics.Rect(0, 0, size, size), null)
 
                 // 预处理 + 推理
                 val tensorData = preprocess(tile)
@@ -646,26 +826,47 @@ class RmbgOnnxEngine(
                 val probs = extractOutputProbs(output)
                 output.close()
 
-                // 概率图写入全尺寸 alpha + 权重（边缘 64px 重叠区线性渐变融合）
+                // 概率图（size×size）放大回块区域，写入全尺寸 alpha + 权重
                 // ★ 越界保护：QNN EPContext 的 HTP 编译输出 shape 可能与 CPU 不同（padding/裁剪），
                 //   probs.size 可能 < size²，越界索引会抛 ArrayIndexOutOfBoundsException
-                for (ty in 0 until size) {
-                    for (tx in 0 until size) {
-                        val gx = ox + tx
-                        val gy = oy + ty
-                        if (gx >= w || gy >= h) continue
-                        val idx = gy * w + gx
-                        val pi = ty * size + tx
+                // ★ 权重算法（对齐 ImageToolbox drawTile 思路）：只对「实际存在相邻块」的方向做线性衰减，
+                //   无邻居方向权重恒为 1。
+                //   - 避免旧算法「四边无差别衰减」导致图边缘角落（仅被单块覆盖且无邻块补偿）权重=0 → alpha=0 角落透明
+                //   - 重叠区两侧 wt 线性互补（Σwt=1），接缝无缝融合
+                //   - weightFull 用 FloatArray，规避旧 ByteArray 在 Σwt>1 时饱和失真
+                val hasL = c > 0
+                val hasR = c < cols - 1
+                val hasT = r > 0
+                val hasB = r < rows - 1
+                for (dy in 0 until th) {
+                    val gy = oy + dy
+                    // 垂直方向：无上/下邻居方向权重恒 1；有邻居方向在重叠带 (overlap px) 内线性递减
+                    var wty = 1f
+                    if (hasT && dy < overlap) wty = dy.toFloat() / overlap
+                    if (hasB && th - 1 - dy < overlap) {
+                        val rb = (th - 1 - dy).toFloat() / overlap
+                        if (rb < wty) wty = rb
+                    }
+                    // 概率图垂直坐标（scale：size→tileH）
+                    val py0 = (dy * size / tileH).coerceIn(0, size - 1)
+                    val rowIdx = gy * w
+                    for (dx in 0 until tw) {
+                        val gx = ox + dx
+                        // 水平方向：无左/右邻居方向权重恒 1；有邻居方向在重叠带 (overlap px) 内线性递减
+                        var wtx = 1f
+                        if (hasL && dx < overlap) wtx = dx.toFloat() / overlap
+                        if (hasR && tw - 1 - dx < overlap) {
+                            val rr = (tw - 1 - dx).toFloat() / overlap
+                            if (rr < wtx) wtx = rr
+                        }
+                        val wt = minOf(wtx, wty).coerceIn(0f, 1f)
+                        val px0 = (dx * size / tileW).coerceIn(0, size - 1)
+                        val pi = py0 * size + px0
                         val p = if (pi < probs.size) probs[pi] else 0f
-                        // 边缘 64px 线性衰减权重（中心 1 → 边界 0；重叠区两侧 wt 和 = 1）
-                        val wx = minOf(tx, size - 1 - tx, overlap).toFloat() / overlap
-                        val wy = minOf(ty, size - 1 - ty, overlap).toFloat() / overlap
-                        val wt = minOf(wx, wy).coerceIn(0f, 1f)
+                        val idx = rowIdx + gx
                         alphaFull[idx] += p.coerceIn(0f, 1f) * wt
-                        // ★ ByteArray 存储：字节累加（0..255 表示 0..1，允许溢出饱和）
-                        val prev = weightFull[idx].toInt() and 0xFF
-                        val next = (prev + (wt * 255).toInt()).coerceAtMost(0xFF)
-                        weightFull[idx] = next.toByte()
+                        // ★ FloatArray 精确累计权重：无饱和，重叠区 Σwt 可 >1（多块覆盖时可到 4）
+                        weightFull[idx] += wt
                     }
                 }
                 doneTiles++
@@ -673,10 +874,9 @@ class RmbgOnnxEngine(
             }
         }
 
-        // 归一化：加权均值 alpha = Σ(p·wt) / Σwt
+        // 归一化：加权均值 alpha = Σ(p·wt) / Σwt（FloatArray 精确权重，无字节量化误差）
         for (i in alphaFull.indices) {
-            // ★ ByteArray 权重转回 0..1（0..255 表示 0..1）
-            val wsum = (weightFull[i].toInt() and 0xFF) / 255f
+            val wsum = weightFull[i]
             if (wsum > 0f) {
                 alphaFull[i] = (alphaFull[i] / wsum).coerceIn(0f, 1f)
             }
@@ -759,7 +959,8 @@ class RmbgOnnxEngine(
         // ★ 整图推理（用不透明版原图：大图自动分块、小图整体缩放，得到全图 alpha mask）
         //   好处：选区内的主体有完整上下文，人物边缘即使跨过选区边界也能正确识别，
         //   不会像"只裁剪选区"那样因局部上下文不足而把边缘误判。
-        val fullRmbg = removeBackground(inferSrc, threshold, tileMode = true)
+        //   分块档位沿用默认 4（2×2），选区精修以全局上下文优先。
+        val fullRmbg = removeBackground(inferSrc, threshold, tileMode = true, tileCount = 4)
         // fullRmbg 是整图抠好的透明 PNG（RGB 来自干净白底合成版，alpha=抠图结果）
 
         // 拼接回整图（逐行处理，避免整图 IntArray×3 峰值 144MB → 行缓冲 48KB）
@@ -885,20 +1086,53 @@ class RmbgOnnxEngine(
      */
     private fun extractOutputProbs(results: OrtSession.Result): FloatArray {
         val values = mutableListOf<Float>()
-        val iterator = results.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            flattenOutputValues(entry.value.value, values)
+        // ★ 多输出模型只取第一个输出：u2netp 有 7 个深度监督头(d0~d6)，运行时只应使用主输出 d0
+        //   （ONNX 输出顺序的第一个，ImageToolbox 同样只取 0 号输出）。
+        //   旧实现遍历全部输出展平拼接 → 320² 模型得到 7×320²=716,800 个 float，浪费 7 倍内存，
+        //   且 ArrayList<Float> 装箱瞬间产生数十 MB 垃圾。单输出模型行为不变。
+        // ★ 对齐 ImageToolbox（output[0]）：按【索引】取第 0 个输出（ONNX 声明顺序的第一个=主输出 d0）。
+        //   不用 iterator()——其遍历顺序不保证按声明顺序，trace 导出的模型输出名全是数字
+        //   （如 "1959"），iterator 可能按内部哈希序返回，取错监督头会导致概率图整体错误。
+        if (results.size() <= 0) {
+            throw IllegalStateException("No output values from ONNX model")
         }
+        val first = results.get(0)
+        flattenOutputValues(first.value, values)
         if (values.isEmpty()) {
             throw IllegalStateException("No output values from ONNX model")
         }
-        // 输出是 1x1x1024x1024 概率图，取整个数组
+        // 输出是 1x1xHxW 概率图，取整个数组
         val arr = values.toFloatArray()
+        // ★ 输出健康度检测（仅提示，不自动处理）：显著性分割模型（rmbg/u2net 系）的正常
+        //   概率图 max 应接近 1.0（sigmoid 后前景像素饱和）。若 max<<1 说明当前执行路径
+        //   （如 NNAPI EP 对 opset11 算子支持不全）产生了错误输出 → 记警告供 UI 提示。
+        //   异常时日志同时写入 logcat(RMBG-ENGINE)，便于用 debug 包 run-as 取证。
+        try {
+            var mx = 0f
+            for (v in arr) {
+                if (v > mx) mx = v
+            }
+            if (mx < 0.1f) {
+                lastRunWarning = "模型输出异常（max=${"%.3f".format(mx)}，正常应接近 1.0）。「${modelFile.name}」在当前加速器下结果不可信，建议到设置中关闭 NNAPI 加速后重试"
+                android.util.Log.w("RMBG-ENGINE", "输出健康度异常: max=$mx probs=${arr.size}（可能是 NNAPI EP 对该模型算子支持不全），仅提示不自动处理")
+            } else {
+                lastRunWarning = null
+            }
+        } catch (_: Exception) {}
         // rmbg14_sdk250 原生输出是 logits，需过 sigmoid 才得到 [0,1] 前景概率，
         // 否则人物内部(logits 小正)被直接当概率压到阈值下，抠空成"线条画"。
         if (sigmoidOutput) {
             for (i in arr.indices) arr[i] = 1f / (1f + Math.exp(-arr[i].toDouble()).toFloat())
+        }
+        // ★ 双通道 softmax 输出（PP-HumanSeg [1,2,H,W]）：
+        //   展平后 arr = [bg(H*W), fg(H*W)]，通道1=前景概率，直接取后半段。
+        //   单通道模型跳过此分支。
+        if (outputChannels == 2 && arr.size >= 2 * inputSize * inputSize) {
+            val hw = inputSize * inputSize
+            val fg = FloatArray(hw)
+            System.arraycopy(arr, hw, fg, 0, hw)  // 取通道1（前景）
+            android.util.Log.i("RMBG-ENGINE", "双通道输出: 取通道1(前景) hw=$hw arr.size=${arr.size}")
+            return fg
         }
         return arr
     }
@@ -957,6 +1191,26 @@ class RmbgOnnxEngine(
                 }
             }
         }
+        // ★ 归一化：ImageNet mean/std（PP-HumanSeg/InSPyReNet 要求）
+        //   在 /255 基础上减均值除标准差；普通模型（u2netp/u2net/rmbg/anime_seg）跳过。
+        if (normalizeMode == NormalizeMode.IMAGENET) {
+            val mean = floatArrayOf(0.485f, 0.456f, 0.406f)
+            val std = floatArrayOf(0.229f, 0.224f, 0.225f)
+            if (inputLayout == InputLayout.NHWC) {
+                for (i in pixels.indices) {
+                    data[i * 3] = (data[i * 3] - mean[0]) / std[0]
+                    data[i * 3 + 1] = (data[i * 3 + 1] - mean[1]) / std[1]
+                    data[i * 3 + 2] = (data[i * 3 + 2] - mean[2]) / std[2]
+                }
+            } else {
+                val hw = size * size
+                for (i in 0 until hw) {
+                    data[i] = (data[i] - mean[0]) / std[0]
+                    data[hw + i] = (data[hw + i] - mean[1]) / std[1]
+                    data[2 * hw + i] = (data[2 * hw + i] - mean[2]) / std[2]
+                }
+            }
+        }
         val buffer = ByteBuffer.allocateDirect(data.size * 4).order(ByteOrder.nativeOrder())
         val fb = buffer.asFloatBuffer()
         fb.put(data)
@@ -971,7 +1225,12 @@ class RmbgOnnxEngine(
         val t = threshold.coerceIn(0f, 1f)
         if (a >= t) return 255
         if (t <= 0f) return (a * 255).toInt().coerceIn(0, 255)
-        return (a / t * 255).toInt().coerceIn(0, 255)
+        val v = (a / t * 255).toInt().coerceIn(0, 255)
+        // ★ premul 量化保护：Android Bitmap 强制 premultiplied 存储，alpha<8 时 RGB 会被
+        //   乘 8/255 后量化到 0~7 级（信息全毁），PNG 导出 unpremultiply 再放大 255/8≈32 倍，
+        //   产生 (255,128,128) 型彩虹噪声碎块（u2netp 背景概率 0.002~0.03 → alpha 1~15 幽灵区实测中招）。
+        //   这些像素合成亮度 ≤8/255≈3%，任何底色上都不可见 → 直接全透明（RGB 随 premul 清零）。
+        return if (v < 8) 0 else v
     }
 
     /** 概率图 → alpha mask，与原图合成（按行处理，降低峰值内存）
@@ -1013,7 +1272,11 @@ class RmbgOnnxEngine(
         // 3. 阈值化 → 生成透明 PNG（按行写，避免整图大数组）
         // ★ 背景残影硬化：alpha 低于下限(bgCleanAlpha)的像素完全透明(RGB 清零)，去掉磨砂雾感
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val src = reusePixels ?: IntArray(w).also { reusePixels = it }
+        // ★ 越界修复：reusePixels 是引擎级共享缓存，仅为空时创建→若之前用小图抠过(长度偏小)，
+        //   现在载入大图(行宽 w 更大)复用它会越界崩溃(ArrayIndexOutOfBoundsException，getPixels 对过小缓冲即抛)。
+        //   必须按当前行宽检查重建（与 removeBackgroundTiled/区域抠图的同款修复对齐）。
+        val rp = reusePixels
+        val src = if (rp == null || rp.size < w) IntArray(w).also { reusePixels = it } else rp
         val dst = IntArray(w)
         for (y in 0 until h) {
             original.getPixels(src, 0, w, 0, y, w, 1)

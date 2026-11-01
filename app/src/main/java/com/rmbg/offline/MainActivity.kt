@@ -744,26 +744,40 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     // ★ 旧版升级兼容：Prefs 存的旧默认值 anime_seg 会被当成"用户选择"→ 额外判断：
     //   若当前设备支持 QNN 且 Prefs 存的模型是 CPU 模型（anime_seg 等），则按设备能力自动升级到 QNN 模型
     val autoModelId = ModelManager.autoPickDefaultModel(context)
-    val restoredModelIdSafe = run {
+    // ★ 启动模型恢复只在【首次组合】执行一次，用 remember 缓存计算结果。
+    //   原实现在普通 val 里每次重组都重跑，且副作用写 Prefs / ModelManager.selectedModelId，
+    //   导致用户点击切换 pphumanseg 后，任何状态变更触发重组都会把它覆盖回默认 u2netp
+    //   （这就是 PP 从未真正 load、Prefs 永远停在 u2netp 的根因）。
+    val restoredModelIdSafe = remember {
         val stored = ModelManager.builtinModels.find { it.id == restoredModelId }
-        val userChosen = restoredModelId.isNotEmpty() &&
-            stored != null &&
-            ModelManager.qnnModelMatchesDevice(stored)
-        if (userChosen) {
-            // ★ 旧版遗留：用户没真正手动选过（存的是旧默认 anime_seg 之类 CPU 模型），
-            //   且设备支持 QNN → 自动升级到 QNN 模型，让 8gen2 默认用 QNN
-            if (stored!!.isQnn || !ModelManager.isQnnSupported(context)) {
-                restoredModelId
-            } else {
-                Prefs.selectedModelId = autoModelId   // 写回 Prefs，之后尊重此选择
-                autoModelId
-            }
+        // ★★ 手动选择持久化修复：
+        //   之前这里用「用户选的是 QNN 或设备不支持 QNN → 保留；否则自动改成 autoModelId」，
+        //   误伤了「手动切到 CPU 模型」的用户：设备支持 QNN 时，用户切到 pphumanseg/u2net 等
+        //   CPU 模型，Prefs.selectedModelId 会被强制覆盖回 autoModelId=u2netp → 用户切换不持久。
+        //   修复原则（用户明确：「默认模型只是默认，切换后要持久化」）：
+        //   只要 Prefs 里存在一个【内置模型 id 且非空】，就视为用户已选择，无条件尊重、不覆盖；
+        //   仅当 Prefs 为空 / 存的 id 已不存在（如旧版升级后删除的模型）才回退 autoModelId。
+        //   「旧默认 anime_seg 自动升级 QNN」这条老路径保留：仅当存的恰好是 autoModelId 同源
+        //   CPU 默认模型且设备支持 QNN 时，才视为「从未手动选过」，升级到 QNN 默认。
+        val isBuiltin = stored != null
+        val userPicked = restoredModelId.isNotEmpty() && isBuiltin
+        if (userPicked) {
+            // 用户确实选过（或 Prefs 里有合法模型 id）→ 尊重，持久化，不覆盖
+            restoredModelId
         } else {
-            Prefs.selectedModelId = autoModelId   // ★ 写回 Prefs，之后重启尊重此选择
-            autoModelId
+            // 无有效选择 → 回退自动默认（QNN 设备且存了旧 CPU 默认 anime_seg → 升级 QNN）
+            val shouldAutoUpgradeQnn = !BuildConfig.IS_LITE &&
+                restoredModelId == "anime_seg" &&
+                ModelManager.isQnnSupported(context) &&
+                ModelManager.builtinModels.any { it.id == ModelManager.autoPickDefaultModel(context) }
+            val picked = if (shouldAutoUpgradeQnn) ModelManager.autoPickDefaultModel(context) else autoModelId
+            Prefs.selectedModelId = picked   // 首次决定写回，后续尊重
+            picked
         }
     }
-    ModelManager.selectedModelId = restoredModelIdSafe
+    // ★ 仅启动时初始化一次 ModelManager.selectedModelId；用户后续手动切换由各自
+    //   onclick 单独写入，不再在此处每次重组覆盖（避免切到 PP 又被改回 u2netp）。
+    LaunchedEffect(Unit) { ModelManager.selectedModelId = restoredModelIdSafe }
     // ★ 模型就位：内置 CPU 模型（anime_seg 等含 assetPath 的）→ 首启从 assets 拷贝到模型目录（离线可用）；
     //   QNN 模型（onnx 头内置、bin 云下载）→ 由 ensureQnnContextDual 双轨部署；其余走下载逻辑。
     var modelReady by remember { mutableStateOf(ModelManager.isModelDownloaded()) }
@@ -833,6 +847,8 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     var showModelDiag by remember { mutableStateOf(false) }
     var tileMode by remember { mutableStateOf(Prefs.tileMode) }
     var turboMode by remember { mutableStateOf(Prefs.turboMode) }
+    var tileLevel by remember { mutableStateOf(Prefs.tileLevel) }
+    var turboLevel by remember { mutableStateOf(Prefs.turboLevel) }
     // ★ 本地模型列表版本号：导入/删除后自增，驱动列表响应式刷新
     var localModelsVersion by remember { mutableStateOf(0) }
     // ★ 超分模型版本号：导入/下载/删除后自增，驱动超分卡片选中态+状态行响应式刷新。
@@ -1094,11 +1110,14 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             val up = try {
                 withContext(Dispatchers.IO) {
                     try {
+                        // ★ 分块 / 极速模式（抠图+超分共用设置）：冲突时只生效极速（极速优先）
+                        val sTurboMode = turboMode
+                        val sTileMode = tileMode && !sTurboMode
                         val imported = com.rmbg.offline.Prefs.superResModelPath
                         if (imported.isNotEmpty() && java.io.File(imported).exists()) {
                             // ★ 优先用导入的超分模型（QNN EPContext 或普通 ONNX，自动检测）
                             val eng = com.rmbg.offline.ml.SuperResEngine.loadFromFile(context, java.io.File(imported), threads = 4)
-                            try { eng.upscale4x(cur) } finally { eng.close() }
+                            try { eng.upscale4x(cur, sTileMode, sTurboMode, tileLevel, turboLevel) } finally { eng.close() }
                         } else {
                             val model = com.rmbg.offline.ml.SuperResEngine.loadFromAssets(context, "models/realesrgan_anime6b.onnx")
                             if (model == null) {
@@ -1106,7 +1125,7 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                                 null
                             } else {
                                 val eng = com.rmbg.offline.ml.SuperResEngine(threads = 4, modelBytes = model)
-                                try { eng.upscale4x(cur) } finally { eng.close() }
+                                try { eng.upscale4x(cur, sTileMode, sTurboMode, tileLevel, turboLevel) } finally { eng.close() }
                             }
                         }
                     } catch (e: Exception) {
@@ -1302,7 +1321,18 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             return cached
         }
         try { cached?.close() } catch (_: Exception) {}
-        val selBm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
+        // ★★★ 状态源归一：元数据必须从【ModelManager.selectedModelId】查找（target 路径即由它决定），
+        //   不能用 Compose 本地 selectedBuiltinId——两者并行更新但启动恢复/快捷切换等窗口期会脱钩，
+        //   脱钩时会把 A 模型的归一化/资产路径套在 B 模型文件上（实测 u2netp 被套上 IMAGENET 归一化，
+        //   输入分布偏移 → 高频区（文字/樱花）输出噪声岛，硬化后成黑色碎块）。
+        val selBm = ModelManager.builtinModels.find { it.id == ModelManager.selectedModelId }
+        // ★ CPU 模型运行必须关闭 QNN 开关（QNN 仅在模型页选中 QNN 条目时开启）。
+        //   防串扰：从 QNN 模型切回 CPU 模型（如 lite 的 U2NetP）时，若 enableQnn 残留 true，
+        //   引擎会用 QNN 插件加载普通 ONNX → 955 字节空输出/加载失败。CPU 模型一律强制 CPU 路径。
+        if (selBm != null && !selBm.isQnn && enableQnn) {
+            enableQnn = false
+            Prefs.enableQnn = false
+        }
         // ★ 加载引擎前仅做【本地资产部署】（assets 拷贝），绝不在抠图时联网下载——
         //   与主界面 LaunchedEffect 一致：用户需先在模型页手动点「部署/重新部署」联网下载 QNN bin。
         //   这里只确保 assets 内的 onnx/bin（内置 QNN）或内置 CPU 资产已拷到模型目录。
@@ -1312,14 +1342,19 @@ fun RmbgScreen(sharedUris: List<Uri>) {
             // ★ 内置 CPU 模型（如 anime_seg）：抠图前确保从 assets 就位（离线可用）
             ModelManager.ensureCpuModelFromAssets(context, selBm.id)
         }
+        // ★ PP-HumanSeg 等 nnapiOk=false 的模型，NNAPI EP 在 createSession 编译图时
+        //   触发 ORT 原生 SIGABRT（native abort，无法被 Java catch，降级防护救不了）。
+        //   故对这类模型强制关闭 NNAPI，走纯 CPU 加载。
+        val useNnapi = enableNnapi && selBm?.nnapiOk != false
         val e = com.rmbg.offline.ml.RmbgOnnxEngine(
             target,
-            enableNnapi = enableNnapi,
+            enableNnapi = useNnapi,
             enableQnn = enableQnn,
             threads = onnxThreads,
             nativeLibDir = try {
                 context.applicationInfo.nativeLibraryDir
-            } catch (_: Exception) { null }
+            } catch (_: Exception) { null },
+            normalizeMode = selBm?.normalizeMode ?: com.rmbg.offline.ml.RmbgOnnxEngine.NormalizeMode.NONE
         ).also {
             it.bgCleanAlpha = Prefs.bgCleanAlpha // ★ 背景硬化阈值：持久化可调
             it.load()
@@ -2218,6 +2253,55 @@ fun RmbgScreen(sharedUris: List<Uri>) {
         statusText = "已恢复主模型：${r.id}"
     }
 
+    // ★ 抗混叠面积均值降采样（box / area average）。
+    //   背景：Bitmap.createScaledBitmap(filter=true) 缩小时用固定 2-tap 双线性、
+    //   滤波核不随缩放比展宽（无抗混叠），大比例缩小（如 4000→256，每步跨十几个源像素）
+    //   会把高频细节混叠成伪信号（此前 u2netp 实测前景置信 31.6%→19.5%，边缘发虚）。
+    //   本实现：每个输出像素 = 源图对应矩形区域的精确平均，天然完美抗混叠。
+    //   供极速模式（缩小图片）预缩放使用，与引擎内 boxDownscale 同一算法，避免两次混叠。
+    fun antiAliasDownscale(src: Bitmap, dw: Int, dh: Int): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w == dw && h == dh) return src
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val out = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888)
+        // 逐输出像素做矩形平均（box/area 抗混叠，完美消除高频混叠伪信号）
+        val outPx = IntArray(dw * dh)
+        for (dy in 0 until dh) {
+            val y0 = dy * h / dh
+            val y1 = maxOf((dy + 1) * h / dh, y0 + 1)
+            for (dx in 0 until dw) {
+                val x0 = dx * w / dw
+                val x1 = maxOf((dx + 1) * w / dw, x0 + 1)
+                var sa = 0L; var sr = 0L; var sg = 0L; var sb = 0L
+                var cnt = 0
+                var y = y0
+                while (y < y1) {
+                    var ii = y * w + x0
+                    val ee = y * w + x1
+                    while (ii < ee) {
+                        val p = px[ii]
+                        sr += (p shr 16) and 0xFF
+                        sg += (p shr 8) and 0xFF
+                        sb += p and 0xFF
+                        sa += (p ushr 24) and 0xFF
+                        cnt++
+                        ii++
+                    }
+                    y++
+                }
+                val a8 = (sa / cnt).toInt()
+                val r8 = (sr / cnt).toInt()
+                val g8 = (sg / cnt).toInt()
+                val b8 = (sb / cnt).toInt()
+                outPx[dy * dw + dx] = (a8 shl 24) or (r8 shl 16) or (g8 shl 8) or b8
+            }
+        }
+        out.setPixels(outPx, 0, dw, 0, 0, dw, dh)
+        return out
+    }
+
     // ---- 执行抠图（支持批量队列：自动连抠，处理完自动取队列下一张）----
     fun runRmbg() {
         if (isProcessing) return
@@ -2261,32 +2345,34 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     val e = withContext(Dispatchers.IO) {
                         val eng = getEngine()
                         if (turbo) {
-                            // ★ 极速模式审查修复：
-                            //   原实现无条件缩到最长边 768（scaleF=768/max边），有两大缺陷：
-                            //   ① 原图已≤768 时 scaleF≥1，会【放大】小图再抠再放大 → 既不加速还降质；
-                            //   ② 极端纵横比长图（如 1000×20000）被按最长轴压到 ~38px 宽，细节全丢。
-                            //   修复：仅当最长边>768 才降采样；并给最短边设下限（≥256，对齐引擎 MIN_INPUT_SIDE），
-                            //   避免极长图被过度压扁；图已≤768 或最短边≤下限时直接整图抠（本来就不大，极速无意义）。
+                            // ★ 极速模式（缩小图片）：按 turboLevel 档位缩到目标最长边，
+                            //   缩得越小越快（128最快最模糊，768最慢但接近原细节）。
+                            //   仅当最长边>turboLevel 才降采样；并给最短边设下限（≥128，
+                            //   对齐引擎 MIN_INPUT_SIDE 应对极小输入），避免极长图被过度压扁。
                             val w = bmp.width
                             val h = bmp.height
                             val maxSide = maxOf(w, h)
                             val minSide = minOf(w, h)
-                            if (maxSide > 768 && minSide >= 256) {
-                                // 降采样到「最长边=768，且保持纵横比」，同时保证最短边≥128，避免长图过扁
-                                val scale = 768f / maxSide
+                            val turboSide = turboLevel.coerceIn(128, 768)
+                            // ★ stretchMode 模型（固定 320² 直拉伸）跳过预缩放：
+                            //   模型输入恒为 320²，预缩放不省推理算力，只会叠加一次
+                            //   无抗混叠重采样（两次混叠进一步削弱小模型前景置信）。
+                            if (maxSide > turboSide && minSide >= 128 && !eng.stretchMode) {
+                                // 降采样到「最长边=turboSide，且保持纵横比」，同时保证最短边≥128，避免长图过扁
+                                val scale = turboSide.toFloat() / maxSide
                                 val sw = maxOf(128, (w * scale).toInt())
                                 val sh = maxOf(128, (h * scale).toInt())
-                                val small = Bitmap.createScaledBitmap(bmp, sw, sh, true)
-                                val smallResult = eng.removeBackground(small, threshold, tileMode = false)
+                                val small = antiAliasDownscale(bmp, sw, sh)
+                                val smallResult = eng.removeBackground(small, threshold, tileMode = false, tileCount = 4)
                                 small.recycle()
                                 Bitmap.createScaledBitmap(smallResult, w, h, true)
                                     .also { smallResult.recycle() }
                             } else {
-                                // 原图已足够小（≤768）或极端长条：直接整图抠，避免无意义的放大/压扁
-                                eng.removeBackground(bmp, threshold, tileMode = false)
+                                // 原图已足够小（≤turboSide）或极端长条：直接整图抠，避免无意义的放大/压扁
+                                eng.removeBackground(bmp, threshold, tileMode = false, tileCount = 4)
                             }
                         } else {
-                            eng.removeBackground(bmp, threshold, useTiling) { done, totalT ->
+                            eng.removeBackground(bmp, threshold, useTiling, tileLevel) { done, totalT ->
                                 // ★ 分块间检查停止：允许用户中途取消长图分块推理
                                 if (stopRequested) {
                                     tileProgressText = "已请求停止"
@@ -2305,10 +2391,17 @@ fun RmbgScreen(sharedUris: List<Uri>) {
                     }
                     val elapsedMs = System.currentTimeMillis() - t0
                     lastElapsedMs = elapsedMs // ★ 记录最近耗时（常驻显示）
+                    // ★ 输出健康度提示（仅提示不自动处理）：引擎检测到概率图异常（如加速 EP
+                    //   算子支持不全）时，在完成文案后附加警告；用户可自行决定是否关 NNAPI 重试。
+                    val runWarning = try { RmbgScreenState.engine?.lastRunWarning } catch (_: Exception) { null }
+                    statusText = when {
+                        runWarning != null -> if (total > 1) "第 $curNum 张完成（输出异常）... $runWarning" else runWarning
+                        total > 1 -> "第 $curNum 张完成..."
+                        else -> "抠图完成！用时 ${"%.1f".format(elapsedMs / 1000f)} 秒，可保存/分享或换图继续"
+                    }
                     // ★ 压入撤销栈（旧结果），再更新为新结果
                     pushUndo(prevResult)
                     resultBitmap = e
-                    statusText = if (total > 1) "第 $curNum 张完成..." else "抠图完成！用时 ${"%.1f".format(elapsedMs / 1000f)} 秒，可保存/分享或换图继续"
                     // 每张完成异步存入历史 + 工程持久化（不阻塞主流程）
                     val curModelName = run {
                         val bm = ModelManager.builtinModels.find { it.id == selectedBuiltinId }
@@ -2795,6 +2888,17 @@ Card(
                                             // 切换模型：立即释放旧引擎（下次抠图自动加载新模型）
                                             try { engine?.close() } catch (_: Exception) {}
                                             engine = null
+                                            // ★ 内置 CPU 资产模型（u2netp 等）：切换即从 assets 就位（4.6MB 毫秒级，无需下载）
+                                            if (bm.assetPath != null && !ModelManager.isBuiltinModelDownloaded(bm)) {
+                                                scope.launch {
+                                                    cpuDeploying = true
+                                                    val ok = withContext(Dispatchers.IO) { ModelManager.ensureCpuModelFromAssets(context, bm.id) }
+                                                    cpuDeploying = false
+                                                    builtinModelsVersion++
+                                                    modelReady = ok && ModelManager.isModelDownloaded()
+                                                    statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341) else "内置模型就位失败，请重试"
+                                                }
+                                            }
                                             // 立即检查该模型是否已下载
                                             modelReady = ModelManager.isModelDownloaded()
                                             statusText = if (modelReady) OperitApp.appContext.getString(R.string.str_341) else if (bm.isQnn) "需要部署 ${bm.name}（内置 ${bm.sizeBytes / 1024 / 1024}MB，点击部署）" else "需要下载模型（约${bm.sizeBytes / 1024 / 1024}MB）"
@@ -2854,8 +2958,8 @@ Card(
                                     } else {
                                         Text(OperitApp.appContext.getString(R.string.str_298), style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
                                     }
-                                    if (bmReady) {
-                                        // 已下载 → 删除按钮
+                                    if (bmReady && bm.assetPath == null) {
+                                        // 已下载（非内置资产模型）→ 删除按钮
                                         IconButton(
                                             onClick = {
                                                 ModelManager.deleteBuiltinModel(bm)
@@ -4327,6 +4431,36 @@ Card(
                             }
                         )
                     }
+                    // 分块档位选择（仅开启分块时显示）：目标分块数 2/4/9/16，滑动选档
+                    if (tileMode) {
+                        val tileOpts = listOf(2, 4, 9, 16)
+                        val tileCurIdx = tileOpts.indexOf(tileLevel).coerceAtLeast(0)
+                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(OperitApp.appContext.getString(R.string.tile_level_label), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                Text(
+                                    "${tileOpts[tileCurIdx]} 块（${when (tileOpts[tileCurIdx]) { 2 -> "1×2"; 4 -> "2×2"; 9 -> "3×3"; else -> "4×4" }}）",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Slider(
+                                value = tileCurIdx.toFloat(),
+                                onValueChange = { v ->
+                                    val idx = v.roundToInt().coerceIn(0, tileOpts.size - 1)
+                                    val lv = tileOpts[idx]
+                                    tileLevel = lv; Prefs.tileLevel = lv
+                                },
+                                valueRange = 0f..(tileOpts.size - 1).toFloat(),
+                                steps = tileOpts.size - 2
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("${tileOpts.first()} 块", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${tileOpts.last()} 块", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                     // 极速模式（与精细抠图并存不冲突）
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -4349,7 +4483,36 @@ Card(
                             }
                         )
                     }
-                    // CPU 线程数
+                    // 极速档位选择（仅开启极速时显示）：缩小目标边长 128/256/512/768，滑动选档
+                    if (turboMode) {
+                        val turboOpts = listOf(128, 256, 512, 768)
+                        val turboCurIdx = turboOpts.indexOf(turboLevel).coerceAtLeast(0)
+                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(OperitApp.appContext.getString(R.string.turbo_level_label), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                Text(
+                                    "${turboOpts[turboCurIdx]}px",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Slider(
+                                value = turboCurIdx.toFloat(),
+                                onValueChange = { v ->
+                                    val idx = v.roundToInt().coerceIn(0, turboOpts.size - 1)
+                                    val lv = turboOpts[idx]
+                                    turboLevel = lv; Prefs.turboLevel = lv
+                                },
+                                valueRange = 0f..(turboOpts.size - 1).toFloat(),
+                                steps = turboOpts.size - 2
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("${turboOpts.first()}px（最快）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${turboOpts.last()}px（最清晰）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically

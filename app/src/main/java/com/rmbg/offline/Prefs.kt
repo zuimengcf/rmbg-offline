@@ -70,6 +70,16 @@ object Prefs {
         get() = sp(OperitApp.appContext).getBoolean("turbo_mode", false)
         set(v) = sp(OperitApp.appContext).edit().putBoolean("turbo_mode", v).apply()
 
+    /** 分块推理档位（目标分块总数）：2 / 4 / 9 / 16，默认 4（2×2） */
+    var tileLevel: Int
+        get() = sp(OperitApp.appContext).getInt("tile_level", 4)
+        set(v) = sp(OperitApp.appContext).edit().putInt("tile_level", v).apply()
+
+    /** 极速模式档位（缩小目标边长）：128 / 256 / 512 / 768，默认 256 */
+    var turboLevel: Int
+        get() = sp(OperitApp.appContext).getInt("turbo_level", 256)
+        set(v) = sp(OperitApp.appContext).edit().putInt("turbo_level", v).apply()
+
     /** 背景硬化阈值（alpha 下限 0~255，默认 192）：
      *  低于此值的半透明背景像素硬化为全透明(消除磨砂雾感)；
      *  值越高背景越干净，越低越保留半透明发丝等细节。 */

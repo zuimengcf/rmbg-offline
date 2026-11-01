@@ -11,6 +11,7 @@ import ai.onnxruntime.TensorInfo
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.ceil
 import kotlin.math.min
 
 /**
@@ -42,6 +43,12 @@ class SuperResEngine(
         private const val PROTECT_ALPHA = 25
         /** 超分安全工作上限：输入边长>此值先降采样（4x 输出边长上限 = 上限*4） */
         const val MAX_INPUT_SIDE = 512
+        /** 极速模式（缩小图片）上限：更小输入 ≥ 更快，牺牲细节换速度（4x 输出≤1280） */
+        const val TURBO_MAX_INPUT_SIDE = 320
+        /** 分块推理的分块重叠量（源像素，与抠图 removeBackgroundTiled 一致整倍数） */
+        private const val TILE_OVERLAP = 64
+        /** 分块推理输出像素上限（4x 输出 ≤ 此值才走分块，防超长超大图 OOM；4096²≈16.7M px） */
+        const val MAX_TILED_OUT_PIXELS = 16_000_000L
 
         /** 从 assets 加载模型文件字节（内置默认，纯 CPU） */
         fun loadFromAssets(context: Context, assetPath: String): ByteArray? {
@@ -188,7 +195,197 @@ class SuperResEngine(
      * 大图自动降采样：输入边长>512 先等比例缩到 512 以内（4x 输出<=2048），防 OOM。
      * @return 新位图（4x 尺寸，ARGB_8888）
      */
-    fun upscale4x(src: Bitmap): Bitmap {
+    fun upscale4x(src: Bitmap): Bitmap = upscale4x(src, tileMode = false, turboMode = false)
+
+    /**
+     * 4x 超分带透明通道的抠图结果，支持分块推理与极速模式（抠图/超分共用语义）。
+     *
+     * 模式分派（与抠图 removeBackground 的 tileMode/turboMode 对齐）：
+     *  - turboMode = true（极速模式·缩小图片）：优先降采样到 turboLevel 目标边长再整张推理，
+     *    缩得越小越快（128最快/最糊，768最慢/最接近原细节），保证最大图也不 OOM。
+     *  - tileMode = true && !turbo（精细·大图分块）：把原图按 tileLevel（2/4/9/16 块）目标分块，
+     *    逐块 4x 推理，融合拼接保细节——大图不降采样也能出全细节，代价是慢（分块越多越慢）。
+     *  - 都 false：默认行为=输入边长>MAX_INPUT_SIDE(512) 先等比降采样再整张推理（原逻辑）。
+     *
+     * @param tileLevel 分块档位（2/4/9/16），仅当 tileMode=true 生效
+     * @param turboLevel 极速档位（128/256/512/768），仅当 turboMode=true 生效
+     * @return 新位图（4x 尺寸，ARGB_8888）。
+     */
+    fun upscale4x(src: Bitmap, tileMode: Boolean, turboMode: Boolean, tileLevel: Int = 4, turboLevel: Int = 256): Bitmap {
+        if (turboMode) {
+            return upscaleTurbo(src, turboLevel)
+        }
+        if (tileMode) {
+            // ★ 分块只对大图有意义（单块就装得下的直接走整张，避免额外开销与接缝）；
+            //   QNN 固定输入模型切块代价高且几何会失真，也走整张兜底。
+            val tooSmall = src.width <= MAX_INPUT_SIDE && src.height <= MAX_INPUT_SIDE
+            if (!tooSmall && fixedInputW <= 0 && fixedInputH <= 0) {
+                return upscaleTiled(src, tileLevel)
+            }
+        }
+        return upscaleWhole(src)
+    }
+
+    /** 极速模式路径：先等比缩到 turboLevel 目标最长边（128/256/512/768），再整张 4x 超分后放大还原。 */
+    private fun upscaleTurbo(src: Bitmap, turboLevel: Int): Bitmap {
+        ensureLoaded()
+        val w0 = src.width
+        val h0 = src.height
+        val maxSide = maxOf(w0, h0)
+        val side = turboLevel.coerceIn(128, 768)
+        // 已足够小（≤side）直接整张超分，避免无意义放大
+        var work = src
+        if (maxSide > side && !(fixedInputW > 0 && fixedInputH > 0)) {
+            val scale = side.toFloat() / maxSide
+            val nw = (w0 * scale).toInt().coerceAtLeast(128)
+            val nh = (h0 * scale).toInt().coerceAtLeast(128)
+            work = Bitmap.createScaledBitmap(src, nw, nh, true)
+        }
+        val small = upscaleWhole(work)
+        // 极速：把 4x 结果放大回「原图边长×4」，保持输出尺寸与整张一致（缩放损失可接受）
+        if (work !== src) { try { work.recycle() } catch (_: Exception) {} }
+        if (small.width == w0 * 4 && small.height == h0 * 4) return small
+        val restored = Bitmap.createScaledBitmap(small, w0 * 4, h0 * 4, true)
+        if (small !== restored) { try { small.recycle() } catch (_: Exception) {} }
+        return restored
+    }
+
+    /** 分块路径：把原图按 tileLevel（2/4/9/16 块）目标分块网格切块，逐块 4x 推理，重叠融合拼接。 */
+    private fun upscaleTiled(src: Bitmap, tileLevel: Int): Bitmap {
+        ensureLoaded()
+        val w = src.width
+        val h = src.height
+        val overlap = TILE_OVERLAP
+
+        // 由目标分块总数推导行列网格（对齐抠图 removeBackgroundTiled）
+        val root = kotlin.math.sqrt(tileLevel.toDouble()).toInt()
+        val cols: Int
+        val rows: Int
+        if (root * root == tileLevel) {
+            cols = root; rows = root
+        } else {
+            if (w >= h) { cols = 2; rows = 1 } else { cols = 1; rows = 2 }
+        }
+        val tileW = maxOf(64, w / cols)
+        val tileH = maxOf(64, h / rows)
+
+        // 每块起始坐标（带 overlap 重叠，最后一块贴右/下边缘）
+        val xs = IntArray(cols)
+        for (c in 0 until cols) {
+            var x = c * (tileW - overlap)
+            if (x + tileW > w) x = w - tileW
+            xs[c] = x.coerceAtLeast(0)
+        }
+        val ys = IntArray(rows)
+        for (r in 0 until rows) {
+            var y = r * (tileH - overlap)
+            if (y + tileH > h) y = h - tileH
+            ys[r] = y.coerceAtLeast(0)
+        }
+        // 确保相邻块必有 overlap 交集（避免接缝）
+        for (c in 1 until cols) {
+            if (xs[c] <= xs[c - 1]) xs[c] = minOf(xs[c - 1] + tileW - overlap, w - tileW).coerceAtLeast(xs[c - 1])
+        }
+        for (r in 1 until rows) {
+            if (ys[r] <= ys[r - 1]) ys[r] = minOf(ys[r - 1] + tileH - overlap, h - tileH).coerceAtLeast(ys[r - 1])
+        }
+
+        // 输出尺寸（4x）
+        val ow = w * 4
+        val oh = h * 4
+        val rgbaFull = FloatArray(ow * oh * 4)   // RGBA 累积（含 alpha 权重，按 4 分量加权）
+        val weightFull = FloatArray(ow * oh)     // 权重累积（重叠带 Σwt 可 >1）
+
+        // 逐块 4x 推理
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val ox = xs[c]
+                val oy = ys[r]
+                val tw = minOf(tileW, w - ox).coerceAtLeast(1)
+                val th = minOf(tileH, h - oy).coerceAtLeast(1)
+                // 裁剪块
+                val srcRect = android.graphics.Rect(ox, oy, minOf(ox + tileW, w), minOf(oy + tileH, h))
+                val tileBmp = Bitmap.createBitmap(src, srcRect.left, srcRect.top, srcRect.width(), srcRect.height())
+                val up = upscaleWhole(tileBmp) // 4x：尺寸 tw*4 × th*4
+                tileBmp.recycle()
+
+                // 块输出像素与全图输出的坐标映射（重叠带权重）
+                val hasL = c > 0; val hasR = c < cols - 1; val hasT = r > 0; val hasB = r < rows - 1
+                val upW = up.width
+                val upH = up.height
+                val upPx = IntArray(upW * upH)
+                up.getPixels(upPx, 0, upW, 0, 0, upW, upH)
+                up.recycle()
+
+                for (dy in 0 until th) {
+                    val gy = oy + dy
+                    // 垂直权重（源像素 overlap 带，相对 4x 前）
+                    var wty = 1f
+                    if (hasT && dy < overlap) wty = dy.toFloat() / overlap
+                    if (hasB && th - 1 - dy < overlap) {
+                        val rb = (th - 1 - dy).toFloat() / overlap
+                        if (rb < wty) wty = rb
+                    }
+                    val outY = gy * 4
+                    for (dx in 0 until tw) {
+                        val gx = ox + dx
+                        var wtx = 1f
+                        if (hasL && dx < overlap) wtx = dx.toFloat() / overlap
+                        if (hasR && tw - 1 - dx < overlap) {
+                            val rr = (tw - 1 - dx).toFloat() / overlap
+                            if (rr < wtx) wtx = rr
+                        }
+                        val wt = minOf(wtx, wty).coerceIn(0f, 1f)
+                        // 该源像素对应的 4x 输出邻域（4×4）：RGBA 与权重同步累加，避免二次子循环错位
+                        for (sy in 0 until 4) {
+                            val oy2 = outY + sy
+                            if (oy2 >= oh) continue
+                            val upY = dy * 4 + sy
+                            if (upY >= upH) continue
+                            val rowO = oy2 * ow
+                            val rowU = upY * upW
+                            for (sx in 0 until 4) {
+                                val ox2 = gx * 4 + sx
+                                if (ox2 >= ow) continue
+                                val upX = dx * 4 + sx
+                                if (upX >= upW) continue
+                                val srcPx = upPx[rowU + upX]
+                                val a = (srcPx ushr 24) and 0xFF
+                                val r8 = (srcPx shr 16) and 0xFF
+                                val g8 = (srcPx shr 8) and 0xFF
+                                val b8 = srcPx and 0xFF
+                                val oi = rowO + ox2
+                                rgbaFull[oi * 4] += r8 * wt
+                                rgbaFull[oi * 4 + 1] += g8 * wt
+                                rgbaFull[oi * 4 + 2] += b8 * wt
+                                rgbaFull[oi * 4 + 3] += a * wt
+                                weightFull[oi] += wt
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 归一化（逐输出像素除以权重和）
+        val out = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
+        val outPx = IntArray(ow * oh)
+        for (i in 0 until ow * oh) {
+            val wsum = weightFull[i]
+            if (wsum > 0f) {
+                val r = (rgbaFull[i * 4] / wsum).coerceIn(0f, 255f).toInt()
+                val g = (rgbaFull[i * 4 + 1] / wsum).coerceIn(0f, 255f).toInt()
+                val b = (rgbaFull[i * 4 + 2] / wsum).coerceIn(0f, 255f).toInt()
+                val a = (rgbaFull[i * 4 + 3] / wsum).coerceIn(0f, 255f).toInt()
+                outPx[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        out.setPixels(outPx, 0, ow, 0, 0, ow, oh)
+        return out
+    }
+
+    /** 整张推理路径（原 upscale4x 逻辑）。 */
+    private fun upscaleWhole(src: Bitmap): Bitmap {
         ensureLoaded()
         // 大图降采样保护（给足余量：512→2048 是 4x，2048 位图约 16MB，+RGB/alpha 数组峰值可控）
         var work = src
