@@ -285,6 +285,15 @@ private fun AboutPage(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(OperitApp.appContext.getString(R.string.str_297), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                ChangelogRow("v2.0.0", listOf(
+                    "修复分块抠图/超分在特定尺寸下右、下边缘漏块",
+                    "修复动态 CPU 超分 tile 索引错位导致的整块透明",
+                    "超分输出新增内存上限保护，超限自动回退整体推理",
+                    "导出格式支持 PNG / WebP / JPG（另存为改后缀即切换）",
+                    "新增导出设置：压缩质量 / 主体收纳（百分比边距·自动居中）/ 导出居中 / 清脏 RGB",
+                    "新增导出预览器：所见即所得预览最终效果与预估体积",
+                    "引擎源头清脏 RGB：全透明像素归零，历史与导出体积约降 30~48%"
+                ))
                 ChangelogRow("v1.4.0", listOf(
                     OperitApp.appContext.getString(R.string.chg_140_1),
                     OperitApp.appContext.getString(R.string.chg_140_2),
@@ -1175,6 +1184,16 @@ fun RmbgScreen(sharedUris: List<Uri>) {
     ) }
     var viewerBgColor by remember { mutableStateOf(Prefs.viewerBgColor) }
 
+    // ---- 导出管线状态（设置页配置 + 导出预览共用；从 Prefs 恢复）----
+    var exportFormat by remember { mutableStateOf(Prefs.exportFormat) }
+    var exportQuality by remember { mutableStateOf(Prefs.exportQuality) }
+    var exportMarginPct by remember { mutableStateOf(Prefs.exportMarginPct) }
+    var exportCenter by remember { mutableStateOf(Prefs.exportCenter) }
+    var exportCleanRgb by remember { mutableStateOf(Prefs.exportCleanRgb) }
+    // 第三个图片预览器：所见即所得导出预览（由查看器/主界面「导出预览」入口打开）
+    var showExportPreview by remember { mutableStateOf(false) }
+    var exportPreviewSource by remember { mutableStateOf<Bitmap?>(null) }
+
     // ---- 通知权限申请 ----
     val notifPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -1403,34 +1422,35 @@ fun RmbgScreen(sharedUris: List<Uri>) {
 
     // ---- 保存 ----
     val saveLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("image/png")
+        contract = ActivityResultContracts.CreateDocument("image/*")
     ) { uri: Uri? ->
         val bmp = resultBitmap ?: return@rememberLauncherForActivityResult
         uri ?: return@rememberLauncherForActivityResult
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { os ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
-            }
-            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_198), Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
+        // ★ 格式按 uri 扩展名推断（SAF 文件名用户可改），识别不出回退设置页选择
+        val fmt = ExportProcessor.formatFromUri(uri)
+            ?: ExportProcessor.ExportFormat.valueOf(Prefs.exportFormat)
+        val ok = ExportProcessor.write(
+            context, bmp, uri, fmt, Prefs.exportQuality,
+            Prefs.exportMarginPct, Prefs.exportCenter, Prefs.exportCleanRgb
+        )
+        Toast.makeText(context, if (ok) OperitApp.appContext.getString(R.string.str_198)
+            else "保存失败: ${uri.lastPathSegment}", Toast.LENGTH_SHORT).show()
     }
 
     // ---- 查看器另存为（SAF 系统文档保存，可自定义文件名/位置）----
     val viewerSaveLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("image/png")
+        contract = ActivityResultContracts.CreateDocument("image/*")
     ) { uri: Uri? ->
         val bmp = viewerBitmap ?: return@rememberLauncherForActivityResult
         uri ?: return@rememberLauncherForActivityResult
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { os ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
-            }
-            Toast.makeText(context, OperitApp.appContext.getString(R.string.str_208), Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(context, "另存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
+        val fmt = ExportProcessor.formatFromUri(uri)
+            ?: ExportProcessor.ExportFormat.valueOf(Prefs.exportFormat)
+        val ok = ExportProcessor.write(
+            context, bmp, uri, fmt, Prefs.exportQuality,
+            Prefs.exportMarginPct, Prefs.exportCenter, Prefs.exportCleanRgb
+        )
+        Toast.makeText(context, if (ok) OperitApp.appContext.getString(R.string.str_208)
+            else "另存失败: ${uri.lastPathSegment}", Toast.LENGTH_SHORT).show()
     }
 
     // ---- 本地模型导入（SAF 选 .onnx）----
@@ -4175,6 +4195,135 @@ Card(
 
             // ===== Tab 3: 设置 =====
             if (currentTab == 3) {
+            // ===== 导出设置（格式/质量/收纳/居中/清脏 RGB）=====
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.IosShare, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("导出设置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
+                    // 格式三选（单选 chips 语义：用 OutlinedButton 高亮模拟）
+                    Text("导出格式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("PNG", "WEBP", "JPG").forEach { f ->
+                            val selected = exportFormat == f
+                            OutlinedButton(
+                                onClick = {
+                                    exportFormat = f
+                                    Prefs.exportFormat = f
+                                },
+                                modifier = Modifier.weight(1f).height(38.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        else Color.Transparent
+                                ),
+                                border = BorderStroke(
+                                    if (selected) 2.dp else 1.dp,
+                                    if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                ),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(f + if (f == "WEBP" && android.os.Build.VERSION.SDK_INT < 30) "*" else "",
+                                    fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                            }
+                        }
+                    }
+                    if (exportFormat == "WEBP" && android.os.Build.VERSION.SDK_INT < 30) {
+                        Text("* 当前系统 < Android 11，将回退为旧版有损 WebP（透明编码有兼容风险）",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    // 质量滑杆（PNG 忽略）
+                    val qEnabled = exportFormat != "PNG"
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("压缩质量", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.weight(1f))
+                            Text("$exportQuality", style = MaterialTheme.typography.bodyMedium,
+                                color = if (qEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold)
+                        }
+                        Slider(
+                            value = exportQuality.toFloat(),
+                            onValueChange = {
+                                exportQuality = it.roundToInt()
+                                Prefs.exportQuality = it.roundToInt()
+                            },
+                            valueRange = 50f..100f,
+                            steps = 9,
+                            enabled = qEnabled
+                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    // 主体收纳滑杆（-1=关）
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("主体收纳（裁到主体+边距）", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                if (exportMarginPct < 0) "关闭" else "$exportMarginPct%",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Slider(
+                            value = exportMarginPct.toFloat(),
+                            onValueChange = {
+                                exportMarginPct = it.roundToInt()
+                                Prefs.exportMarginPct = it.roundToInt()
+                            },
+                            valueRange = -1f..50f,
+                            steps = 50,
+                            enabled = true
+                        )
+                        Text(
+                            if (exportMarginPct < 0) "关闭：保留完整画布（与原图同尺寸）"
+                            else if (exportMarginPct == 0) "边距 0：画布紧贴主体（自动居中）"
+                            else "边距 ${exportMarginPct}%：主体四周留白（自动居中）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // 居中开关
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("导出居中", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text("收纳模式下恒居中；关闭收纳时把主体平移到画布中心",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = exportCenter,
+                            onCheckedChange = {
+                                exportCenter = it
+                                Prefs.exportCenter = it
+                            }
+                        )
+                    }
+                    // 清脏 RGB 开关
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("清脏 RGB（推荐）", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                            Text("透明像素 RGB 归零：体积约省一半，防止缩放合成出彩边",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = exportCleanRgb,
+                            onCheckedChange = {
+                                exportCleanRgb = it
+                                Prefs.exportCleanRgb = it
+                            }
+                        )
+                    }
+                }
+            }
+
             // ===== 通知保活 =====
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
@@ -5939,7 +6088,7 @@ Card(
                         Text(OperitApp.appContext.getString(R.string.str_135), fontSize = 13.sp)
                     }
                     OutlinedButton(
-                        onClick = { saveLauncher.launch("rmbg_${System.currentTimeMillis()}.png") },
+                        onClick = { saveLauncher.launch(ExportProcessor.suggestedName()) },
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp),
@@ -5947,6 +6096,21 @@ Card(
                     ) {
                         Text(OperitApp.appContext.getString(R.string.str_165), fontSize = 13.sp)
                     }
+                }
+                // 第三行：导出预览（第三个图片预览器：所见即所得 清理/收纳/格式压缩 效果）
+                OutlinedButton(
+                    onClick = {
+                        exportPreviewSource = resultBitmap
+                        showExportPreview = true
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Filled.Preview, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("导出预览（所见即所得）", fontSize = 13.sp)
                 }
             }
             // 高级编辑入口（独立一行，有原图即可进入）
@@ -6696,7 +6860,7 @@ Card(
                             OutlinedButton(
                                 onClick = {
                                     val b = viewerBitmap ?: return@OutlinedButton
-                                    viewerSaveLauncher.launch("rmbg_${System.currentTimeMillis()}.png")
+                                    viewerSaveLauncher.launch(ExportProcessor.suggestedName())
                                 },
                                 modifier = Modifier.weight(1f).height(40.dp),
                                 shape = RoundedCornerShape(10.dp),
@@ -6723,6 +6887,20 @@ Card(
                                 Spacer(Modifier.width(4.dp))
                                 Text(OperitApp.appContext.getString(R.string.str_135), fontSize = 13.sp)
                             }
+                        }
+                        // 导出预览入口（查看器版本：所见即所得）
+                        OutlinedButton(
+                            onClick = {
+                                exportPreviewSource = viewerBitmap
+                                showExportPreview = true
+                            },
+                            enabled = bmp != null,
+                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Filled.Preview, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("导出预览（所见即所得）", fontSize = 13.sp)
                         }
                     } else {
                         // 原图：高级编辑 + AI 重绘 + 4x超分 + 立即抠图 + 保存
@@ -6852,6 +7030,16 @@ Card(
                     }
                 }
             }
+        }
+    }
+
+    // ★ 第三个图片预览器：导出预览（所见即所得）
+    if (showExportPreview) {
+        val epSrc = exportPreviewSource
+        if (epSrc != null && !epSrc.isRecycled) {
+            ExportPreviewDialog(source = epSrc, onDismiss = { showExportPreview = false })
+        } else {
+            showExportPreview = false
         }
     }
 
@@ -7374,18 +7562,22 @@ private fun saveToRmbgFolder(context: android.content.Context, bmp: Bitmap?): Bo
 private fun saveToRmbgFolderNamed(context: android.content.Context, bmp: Bitmap?): String? {
     if (bmp == null) return null
     return try {
-        val displayName = "rmbg_${System.currentTimeMillis()}.png"
+        // ★ 统一导出管线：格式/质量/清理/收纳按设置页配置
+        val fmt = ExportProcessor.ExportFormat.valueOf(Prefs.exportFormat)
+        val displayName = "rmbg_${System.currentTimeMillis()}.${ExportProcessor.extOf(fmt)}"
         val values = android.content.ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.MIME_TYPE, ExportProcessor.mimeOf(fmt))
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/rmbg")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         if (uri != null) {
-            context.contentResolver.openOutputStream(uri)?.use { os ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
-            }
+            val ok = ExportProcessor.write(
+                context, bmp, uri, fmt, Prefs.exportQuality,
+                Prefs.exportMarginPct, Prefs.exportCenter, Prefs.exportCleanRgb
+            )
+            if (!ok) return null
             context.contentResolver.update(
                 uri,
                 android.content.ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },

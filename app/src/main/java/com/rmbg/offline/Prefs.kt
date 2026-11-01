@@ -235,4 +235,30 @@ object Prefs {
     var superResModelPath: String
         get() = sp(OperitApp.appContext).getString("super_res_model_path", "") ?: ""
         set(v) = sp(OperitApp.appContext).edit().putString("super_res_model_path", v).apply()
+
+    // ---- 导出管线（ExportProcessor）----
+    /** 导出格式："PNG" / "WEBP" / "JPG" */
+    var exportFormat: String
+        get() = sp(OperitApp.appContext).getString("export_format", "PNG") ?: "PNG"
+        set(v) = sp(OperitApp.appContext).edit().putString("export_format", v).apply()
+
+    /** 导出质量（WEBP/JPG 生效，50~100，PNG 无损忽略） */
+    var exportQuality: Int
+        get() = sp(OperitApp.appContext).getInt("export_quality", 90)
+        set(v) = sp(OperitApp.appContext).edit().putInt("export_quality", v.coerceIn(50, 100)).apply()
+
+    /** 主体收纳边距（主体长边百分比 0~50）；-1 = 关闭收纳（保留完整画布） */
+    var exportMarginPct: Int
+        get() = sp(OperitApp.appContext).getInt("export_margin_pct", -1)
+        set(v) = sp(OperitApp.appContext).edit().putInt("export_margin_pct", v.coerceIn(-1, 50)).apply()
+
+    /** 导出居中（收纳模式下恒居中；关闭收纳时=仅平移主体到画布中心） */
+    var exportCenter: Boolean
+        get() = sp(OperitApp.appContext).getBoolean("export_center", false)
+        set(v) = sp(OperitApp.appContext).edit().putBoolean("export_center", v).apply()
+
+    /** 清脏 RGB（alpha=0 像素 RGB 归零；默认开，-48% 体积 + 防彩边 halo） */
+    var exportCleanRgb: Boolean
+        get() = sp(OperitApp.appContext).getBoolean("export_clean_rgb", true)
+        set(v) = sp(OperitApp.appContext).edit().putBoolean("export_clean_rgb", v).apply()
 }

@@ -31,8 +31,8 @@ android {
         applicationId = "com.rmbg.offline"
         minSdk = 27
         targetSdk = 35
-        versionCode = 45
-        versionName = "1.4.0"
+        versionCode = 46
+        versionName = "2.0.0"
 
         // ★ 是否为 Lite 精简版（包名 com.rmbg.offline.lite，模型不内置、走 HF 云下载）
         buildConfigField("boolean", "IS_LITE", "false")
@@ -49,15 +49,15 @@ android {
         create("normal") {
             dimension = "edition"
             applicationId = "com.rmbg.offline"
-            versionCode = 45
-            versionName = "1.4.0"
+            versionCode = 46
+            versionName = "2.0.0"
             buildConfigField("boolean", "IS_LITE", "false")
         }
         create("lite") {
             dimension = "edition"
             applicationId = "com.rmbg.offline.lite"
-            versionCode = 45
-            versionName = "1.4.0"
+            versionCode = 46
+            versionName = "2.0.0"
             buildConfigField("boolean", "IS_LITE", "true")
         }
     }

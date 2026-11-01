@@ -894,7 +894,8 @@ class RmbgOnnxEngine(
                 val g = (color shr 8) and 0xFF
                 val b = color and 0xFF
                 // 默认不硬化：保留全部半透明边缘（背景硬化作为查看器后处理选项）
-                dst[x] = Color.argb(alphaByte, r, g, b)
+                // ★ 清脏 RGB：全透明像素 RGB 归零（导出体积约 -48%，杜绝下游缩放合成彩边 halo）
+                dst[x] = if (alphaByte == 0) 0 else Color.argb(alphaByte, r, g, b)
             }
             out.setPixels(dst, 0, w, 0, y, w, 1)
         }
@@ -1282,6 +1283,9 @@ class RmbgOnnxEngine(
                 dst[x] = if (harden && alphaByte < bgCleanAlpha) {
                     // ★★★ 遮罩模型核心：硬化只清 alpha，RGB 保留原图色（恢复取回原色）
                     (r shl 16) or (g shl 8) or b
+                } else if (alphaByte == 0) {
+                    // ★ 清脏 RGB：全透明像素 RGB 归零（导出体积约 -48%，杜绝下游缩放合成彩边 halo）
+                    0
                 } else {
                     // 保留柔和过渡（含半透明边缘；harden=false 时完整保留供后处理去色边/柔化）
                     Color.argb(alphaByte, r, g, b)
