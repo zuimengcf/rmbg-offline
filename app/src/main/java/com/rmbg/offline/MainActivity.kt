@@ -285,6 +285,12 @@ private fun AboutPage(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(OperitApp.appContext.getString(R.string.str_297), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                ChangelogRow("v1.4.0", listOf(
+                    OperitApp.appContext.getString(R.string.chg_140_1),
+                    OperitApp.appContext.getString(R.string.chg_140_2),
+                    OperitApp.appContext.getString(R.string.chg_140_3),
+                    OperitApp.appContext.getString(R.string.chg_140_4)
+                ))
                 ChangelogRow("v1.3.0", listOf(
                     OperitApp.appContext.getString(R.string.str_186),
                     OperitApp.appContext.getString(R.string.str_333),

@@ -301,6 +301,10 @@
     <string name="str_295">智能选区 · 点击分割</string>
     <string name="str_296">暂无抠图记录</string>
     <string name="str_297">更新日志</string>
+    <string name="chg_140_1">分块推理与极速模式四档等级化（抠图/超分共用）：分块 2/4/9/16，极速缩小边长 128/256/512/768，冲突时极速优先，档位 UI 改为滑杆</string>
+    <string name="chg_140_2">修复手动切换模型后重启被覆盖回默认模型的问题，模型选择现在完全持久化</string>
+    <string name="chg_140_3">Anime-Seg 移出安装包改为云端下载（完整版体积 -176MB）；新增 U²-Net / PP-HumanSeg / InSPyReNet 模型，U²-Net 与 PP-HumanSeg 内置免下载</string>
+    <string name="chg_140_4">极速模式预缩放改用抗混叠降采样，消除大比例缩小导致的边缘发虚与前景置信下降</string>
     <string name="str_298">未下载</string>
     <string name="str_299">未启动</string>
     <string name="str_300">未启用</string>
